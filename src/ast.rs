@@ -2,6 +2,7 @@ use crate::token::Token;
 
 pub type NodeId = usize;
 
+#[derive(Debug, PartialEq)]
 pub enum Expression {
     Ident {
         value: String,
@@ -29,11 +30,13 @@ pub enum Expression {
 
 pub type BlockStmt = Vec<NodeId>;
 
+#[derive(Debug, PartialEq)]
 pub struct FuncParam {
-    name: String,
-    ty: String,
+    pub name: String,
+    pub ty: String,
 }
 
+#[derive(Debug, PartialEq)]
 pub enum Statement {
     Let {
         name: String,
@@ -53,5 +56,15 @@ pub enum Statement {
         return_ty: String,
         params: Vec<FuncParam>,
         body: Option<BlockStmt>,
+    },
+    Expr {
+        value: NodeId,
     }
+}
+
+#[derive(Debug)]
+pub struct Program {
+    pub body: Vec<NodeId>,
+    pub expressions: Vec<Expression>,
+    pub statements: Vec<Statement>,
 }
