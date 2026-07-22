@@ -90,7 +90,6 @@ impl Parser {
             Token::Ident(name) => self.parse_ident(name),
             Token::Int(lit) => self.parse_int(lit),
             Token::String(lit) => self.parse_string(lit),
-            tok @ (Token::True | Token::False) => self.parse_true_false(tok),
             op @ (Token::Minus | Token::Bang) => self.parse_unary_expression(op)?,
             token => bail!("invalid prefix operator {}", token),
         };
@@ -119,11 +118,6 @@ impl Parser {
 
     fn parse_string(&mut self, lit: String) -> NodeId {
         self.push_expression(Expression::String { value: lit })
-    }
-
-    fn parse_true_false(&mut self, tok: Token) -> NodeId {
-        let value = if tok == Token::True { "1".to_string() } else { "0".to_string() };
-        self.push_expression(Expression::Int { value })
     }
 
     fn parse_unary_expression(&mut self, op: Token) -> Result<NodeId> {
@@ -334,30 +328,30 @@ mod tests {
         Ok(())
     }
 
-    // #[test]
-    // fn test_parse_program() -> Result<()> {
-    //     let input = br#"
-    //         fn main() -> i32 {
-    //             printf("salutare")
-    //             let a: i32 = 1 + 1
-    //             let b: bool = !false
-    //         }
-    //     "#;
+    #[test]
+    fn test_parse_program() -> Result<()> {
+        let input = br#"
+            fn main() -> i32 {
+                printf("salutare")
+                let a: i32 = 1 + 1
+                let b: bool = !false
+            }
+        "#;
 
-    //     let lexer = Lexer::new(input.to_vec());
-    //     let mut parser = Parser::new(lexer)?;
-    //     let program = parser.parse_program()?;
+        let lexer = Lexer::new(input.to_vec());
+        let parser = Parser::new(lexer)?;
+        let program = parser.parse_program()?;
 
-    //     bail!("{:#?}", program);
+        println!("{:#?}", program);
 
-    //     // assert_eq!(program, Program {
-    //     //     body: vec![
-    //     //         Statement::Func {
-    //     //             name: "main",
-    //     //             return_ty: "i32", params: (), body: () }
-    //     //     ],
-    //     // });
+        // assert_eq!(program, Program {
+        //     body: vec![
+        //         Statement::Func {
+        //             name: "main",
+        //             return_ty: "i32", params: (), body: () }
+        //     ],
+        // });
 
-    //     Ok(())
-    // }
+        Ok(())
+    }
 }

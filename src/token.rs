@@ -35,8 +35,6 @@ pub enum Token {
     If,
     Else,
     Return,
-    True,
-    False,
 }
 
 impl Token {
@@ -48,8 +46,6 @@ impl Token {
             "if" => If,
             "else" => Else,
             "return" => Return,
-            "true" => True,
-            "false" => False,
             _ => Ident(symbol.to_string()),
         }
     }
@@ -95,8 +91,6 @@ impl std::fmt::Display for Token {
             If => "if",
             Else => "else",
             Return => "return",
-            True => "true",
-            False => "false",
         };
 
         write!(f, "{}", res)
