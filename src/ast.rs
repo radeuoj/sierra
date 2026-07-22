@@ -63,7 +63,7 @@ pub enum Statement {
 }
 
 #[derive(Debug)]
-pub struct Program {
+pub struct FileAST {
     pub body: Vec<NodeId>,
     pub expressions: Vec<Expression>,
     pub statements: Vec<Statement>,

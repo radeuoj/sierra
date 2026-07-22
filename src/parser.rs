@@ -283,7 +283,7 @@ impl Parser {
         Ok(self.push_statement(Statement::Expr { value }))
     }
 
-    pub fn parse_program(mut self) -> Result<Program> {
+    pub fn parse_file(mut self) -> Result<FileAST> {
         let mut body = vec![];
         let mut errs = vec![];
 
@@ -297,7 +297,7 @@ impl Parser {
         if !errs.is_empty() { bail!(errs.iter().map(|err| format!("{err}"))
             .reduce(|acc, err| format!("{acc}\n{err}")).unwrap_or_default()) }
 
-        Ok(Program {
+        Ok(FileAST {
             body,
             expressions: self.expressions,
             statements: self.statements,
@@ -340,7 +340,7 @@ mod tests {
 
         let lexer = Lexer::new(input.to_vec());
         let parser = Parser::new(lexer)?;
-        let program = parser.parse_program()?;
+        let program = parser.parse_file()?;
 
         println!("{:#?}", program);
 
