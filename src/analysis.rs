@@ -1,9 +1,10 @@
-use std::{collections::{HashMap, HashSet}, ops::Deref};
+use std::collections::{HashMap, HashSet};
 
-use anyhow::{Context, Result, anyhow, bail};
+use anyhow::{Result, anyhow, bail};
 
 use crate::{ast::*, token::Token};
 
+#[derive(Debug)]
 pub struct Analysis {
     types: HashMap<String, NamedType>, // named types
     expr_types: HashMap<NodeId, Type>,
@@ -11,6 +12,7 @@ pub struct Analysis {
     func_defs: HashSet<String>, // whether this function has a definition already
 }
 
+#[derive(Debug)]
 pub enum NamedType {
     Primitive(String),
 }
@@ -37,18 +39,46 @@ struct Scope<'a> {
  * so check functions do type checking and add types to all expressions
  */
 impl Analysis {
-    pub fn from(file: &FileAST) -> Self {
+    pub fn from(file: &FileAST) -> Result<Self> {
         let mut types = HashMap::new();
         types.insert("i32".into(), NamedType::Primitive("int32_t".into()));
 
-        let analysis = Self {
+        let mut analysis = Self {
             types,
             expr_types: HashMap::new(),
             func_decls: HashMap::new(),
             func_defs: HashSet::new(),
         };
 
-        analysis
+        analysis.check_top_level(file)?;
+        let mut errs = vec![];
+
+        for stmt in &file.body {
+            let stmt = &file.statements[*stmt];
+
+            match stmt {
+                Statement::Func {
+                    name,
+                    params,
+                    body,
+                    ..
+                } => if let Some(body) = body && let Err(err)
+                        = analysis.check_func_body(file, analysis.func_decls.get(name).unwrap().clone(), params, body)
+                {
+                    errs.push(err);
+                }
+                _ => unreachable!("already checked"),
+            }
+        }
+
+        if !errs.is_empty() {
+            bail!(errs.iter()
+                .map(|err| format!("{err}"))
+                .reduce(|acc, err| format!("{acc}\n{err}"))
+                .unwrap_or_default())
+        }
+
+        Ok(analysis)
     }
 
     fn does_name_exist(&self, name: &str, scope: Option<&Scope>) -> bool {
@@ -130,7 +160,7 @@ impl Analysis {
         let mut param_names = HashSet::new();
 
         for param in params {
-            if self.does_type_exist(name)
+            if self.does_type_exist(&param.name)
                 || self.does_name_exist(&param.name, None)
                 || param_names.contains(&param.name)
             {
@@ -210,7 +240,7 @@ impl Analysis {
         // if let Some(ty) = self.expr_types.get(&right) && Type::
         // here you would have to check if right is a primitive but im too lazy to do it
 
-        self.check_expr(file, right, scope);
+        self.check_expr(file, right, scope)?;
 
         self.expr_types.insert(id, self.expr_types.get(&right).unwrap().clone());
 
@@ -223,8 +253,8 @@ impl Analysis {
         // something like i32 < i64 < f32 < f64
         // this has to be checked with the c std as im unaware right now
 
-        self.check_expr(file, left, scope);
-        self.check_expr(file, right, scope);
+        self.check_expr(file, left, scope)?;
+        self.check_expr(file, right, scope)?;
 
         self.expr_types.insert(id, self.expr_types.get(&right).unwrap().clone());
 
@@ -232,7 +262,7 @@ impl Analysis {
     }
 
     fn check_call(&mut self, file: &FileAST, id: NodeId, func: NodeId, args: &[NodeId], scope: &Scope) -> Result<()> {
-        self.check_expr(file, func, scope);
+        self.check_expr(file, func, scope)?;
 
         let Type::Func(ty) = self.expr_types.get(&func).unwrap() else {
             bail!("left of call expr is not a function");
@@ -240,9 +270,15 @@ impl Analysis {
 
         let ty = *ty.clone();
 
+        if args.len() != ty.params.len() {
+            bail!("expected {} args but got {}", ty.params.len(), args.len());
+        }
+
         let mut errs = vec![];
         for (i, (arg, ty)) in args.iter().zip(ty.params.iter()).enumerate() {
-            self.check_expr(file, *arg, scope);
+            if let Err(err) = self.check_expr(file, *arg, scope) {
+                errs.push(err);
+            }
 
             if self.expr_types.get(&arg) != Some(ty) {
                 errs.push(anyhow!("arg {} of func does not match type of param", i));
