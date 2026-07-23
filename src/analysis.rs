@@ -6,10 +6,10 @@ use crate::{ast::*, token::Token};
 
 #[derive(Debug)]
 pub struct Analysis {
-    types: HashMap<String, NamedType>, // named types
-    expr_types: HashMap<ExprHash, Type>,
-    func_decls: HashMap<String, FuncType>,
-    func_defs: HashSet<String>, // whether this function has a definition already
+    pub types: HashMap<String, NamedType>, // named types
+    pub expr_types: HashMap<ExprHash, Type>,
+    pub func_decls: HashMap<String, FuncType>,
+    pub func_defs: HashSet<String>, // whether this function has a definition already
 }
 
 #[derive(Debug)]
@@ -25,6 +25,7 @@ pub struct FuncType {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Type {
+    Void,
     Named(String),
     Func(Box<FuncType>),
 }
@@ -41,7 +42,14 @@ struct Scope<'a> {
 impl Analysis {
     pub fn new(file: &File) -> Result<Self> {
         let mut types = HashMap::new();
+        types.insert("i8".into(), NamedType::Primitive("int8_t".into()));
+        types.insert("u8".into(), NamedType::Primitive("uint8_t".into()));
+        types.insert("i16".into(), NamedType::Primitive("int16_t".into()));
+        types.insert("u16".into(), NamedType::Primitive("uint16_t".into()));
         types.insert("i32".into(), NamedType::Primitive("int32_t".into()));
+        types.insert("u32".into(), NamedType::Primitive("uint32_t".into()));
+        types.insert("i64".into(), NamedType::Primitive("int64_t".into()));
+        types.insert("u64".into(), NamedType::Primitive("uint64_t".into()));
 
         let mut analysis = Self {
             types,
@@ -106,7 +114,7 @@ impl Analysis {
                     return_type,
                     params,
                     body,
-                } => match self.check_func(name, return_type, params, body.is_some()) {
+                } => match self.check_func(name, return_type.as_deref(), params, body.is_some()) {
                     Ok(()) => (),
                     Err(err) => errs.push(err),
                 },
@@ -127,14 +135,14 @@ impl Analysis {
     fn check_func(
         &mut self,
         name: &str,
-        return_type: &str,
+        return_type: Option<&str>,
         params: &[FuncParam],
         body: bool,
     ) -> Result<()> {
         let mut errs = vec![];
 
         let func_type = FuncType {
-            return_type: Type::Named(return_type.into()),
+            return_type: return_type.map_or(Type::Void, |ty| Type::Named(ty.into())),
             params: params.iter()
                 .map(|param| Type::Named(param.ty.clone()))
                 .collect(),
@@ -149,7 +157,7 @@ impl Analysis {
             errs.push(anyhow!("{} already exists", name));
         }
 
-        if !self.does_type_exist(return_type) {
+        if let Some(return_type) = return_type && !self.does_type_exist(return_type) {
             errs.push(anyhow!("{} is not a type", return_type));
         }
 

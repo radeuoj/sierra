@@ -1,6 +1,9 @@
+use std::collections::HashMap;
+
 use crate::ast::*;
 use crate::analysis::*;
 
+#[allow(unused)]
 pub struct Compiler {
     file: File,
     analysis: Analysis,
@@ -15,11 +18,13 @@ impl Compiler {
         format!(r#"// compiled from Sierra
 #include <stdio.h>
 #include <stdint.h>
-typedef int32_t i32;
-typedef const char* str;
 
 {}
-            "#, self.file.body.iter()
+
+{}
+            "#,
+            self.compile_typedefs(&self.analysis.types),
+            self.file.body.iter()
                 .map(|stmt| self.compile_statement(stmt, 0))
                 .reduce(|acc, stmt| format!("{acc}\n{stmt}"))
                 .unwrap_or_default()
@@ -51,9 +56,9 @@ typedef const char* str;
                 Expr { value } => format!("{};",
                     self.compile_expression(value)),
                 Func { name, return_type, params, body: None } => format!("{};",
-                    self.compile_func_decl(name, return_type, params)),
+                    self.compile_func_decl(name, return_type.as_deref(), params)),
                 Func { name, return_type, params, body: Some(body) } => format!("{} {}",
-                    self.compile_func_decl(name, return_type, params),
+                    self.compile_func_decl(name, return_type.as_deref(), params),
                     self.compile_block_statement(body, indent),
                 ),
             }
@@ -94,9 +99,9 @@ typedef const char* str;
         }
     }
 
-    fn compile_func_decl(&self, name: &str, return_type: &str, params: &[FuncParam]) -> String {
+    fn compile_func_decl(&self, name: &str, return_type: Option<&str>, params: &[FuncParam]) -> String {
         format!("{} {}({})",
-            return_type, name,
+            return_type.unwrap_or("void"), name,
             params.iter()
                 .map(|param| self.compile_param(param))
                 .reduce(|acc, s| format!("{acc}, {s}"))
@@ -105,5 +110,18 @@ typedef const char* str;
 
     fn compile_param(&self, param: &FuncParam) -> String {
         format!("{} {}", param.ty, param.name)
+    }
+
+    fn compile_typedefs(&self, types: &HashMap<String, NamedType>) -> String {
+        types.iter()
+            .map(|(to, from)| format!("typedef {} {};", self.compile_named_type(from), to))
+            .reduce(|acc, ty| format!("{acc}\n{ty}"))
+            .unwrap_or_default()
+    }
+
+    fn compile_named_type(&self, ty: &NamedType) -> String {
+        match ty {
+            NamedType::Primitive(ty) => ty.clone(),
+        }
     }
 }

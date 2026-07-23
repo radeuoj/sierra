@@ -210,8 +210,10 @@ impl Parser {
 
         let params = self.parse_func_params()?;
 
-        self.expect_peek(&Token::Arrow)?;
-        let return_type = self.expect_ident()?;
+        let return_type = if self.peek_token == Token::Arrow {
+            self.next_token()?;
+            Some(self.expect_ident()?)
+        } else { None };
 
         let body = if self.peek_token == Token::LBrace {
             Some(self.parse_block_statement()?)
