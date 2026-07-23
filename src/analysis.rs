@@ -410,3 +410,54 @@ impl<'a> Scope<'a> {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{lexer::Lexer, parser::Parser};
+
+    fn analyze(input: &[u8]) -> Result<()> {
+        let lexer = Lexer::new(input.to_vec());
+        let parser = Parser::new(lexer)?;
+        let file = parser.parse_file()?;
+        Analysis::from(&file)?;
+        Ok(())
+    }
+
+    #[test]
+    fn valid_function() {
+        analyze(b"fn main() -> i32 { let x: i32 = 1 return x }").unwrap();
+    }
+
+    #[test]
+    fn undefined_variable() {
+        let result = analyze(b"fn main() -> i32 { let x: i32 = y return x }");
+        assert!(result.is_err());
+        let err = format!("{}", result.unwrap_err());
+        assert!(err.contains("does not exist"), "{err}");
+    }
+
+    #[test]
+    fn duplicate_function() {
+        let result = analyze(b"fn foo() -> i32 { return 1 } fn foo() -> i32 { return 2 }");
+        assert!(result.is_err());
+        let err = format!("{}", result.unwrap_err());
+        assert!(err.contains("foo already exists"), "{err}");
+    }
+
+    #[test]
+    fn argument_count_mismatch() {
+        let result = analyze(b"fn foo(x: i32) -> i32 { return x } fn main() -> i32 { return foo(1, 2) }");
+        assert!(result.is_err());
+        let err = format!("{}", result.unwrap_err());
+        assert!(err.contains("expected"), "{err}");
+    }
+
+    #[test]
+    fn call_non_function() {
+        let result = analyze(b"fn main() -> i32 { let x: i32 = 1 return x(1) }");
+        assert!(result.is_err());
+        let err = format!("{}", result.unwrap_err());
+        assert!(err.contains("not a function"), "{err}");
+    }
+}
