@@ -1,8 +1,8 @@
 use std::collections::{HashMap, HashSet};
 
-use anyhow::{Result, anyhow, bail};
+use anyhow::{Context, Result, anyhow, bail};
 
-use crate::ast::*;
+use crate::{ast::*, token::Token};
 
 pub struct Analysis {
     types: HashMap<String, NamedType>, // named types
@@ -15,17 +15,26 @@ pub enum NamedType {
     Primitive(String),
 }
 
-#[derive(PartialEq)]
+#[derive(Clone, PartialEq)]
 pub struct FuncType {
     pub return_type: Type,
     pub params: Vec<Type>,
 }
 
-#[derive(PartialEq)]
+#[derive(Clone, PartialEq)]
 pub enum Type {
     Named(String),
+    Func(Box<FuncType>),
 }
 
+struct Scope<'a> {
+    parent: Option<&'a Scope<'a>>,
+    symbols: HashMap<String, Type>,
+}
+
+/**
+ * so check functions do type checking and add types to all expressions
+ */
 impl Analysis {
     pub fn from(file: &FileAST) -> Self {
         let mut types = HashMap::new();
@@ -41,12 +50,21 @@ impl Analysis {
         analysis
     }
 
-    fn check_name(&self, name: &str) -> bool {
-        self.types.get(name).is_some() || self.func_decls.get(name).is_some()
+    fn does_name_exist(&self, name: &str, scope: Option<&Scope>) -> bool {
+        self.func_decls.contains_key(name)
+            || scope.map_or(false, |scope| scope.contains(name))
     }
 
-    fn check_type(&self, name: &str) -> bool {
-        self.types.get(name).is_some()
+    fn does_type_exist(&self, name: &str) -> bool {
+        self.types.contains_key(name)
+    }
+
+    fn get_type_of(&self, name: &str, scope: Option<&Scope>) -> Option<Type> {
+        if let Some(func_type) = self.func_decls.get(name) {
+            Some(Type::Func(Box::new(func_type.clone())))
+        } else {
+            scope.map(|scope| scope.get_type_of(name)).unwrap_or(None)
+        }
     }
 
     fn check_top_level(&mut self, file: &FileAST) -> Result<()> {
@@ -95,33 +113,126 @@ impl Analysis {
                 .collect(),
         };
 
-        if self.check_name(name) &&
+        // TODO: wtf is this bruh
+        if self.types.contains_key(name) || (self.func_decls.contains_key(name) &&
             !(!body && *self.func_decls.get(name).unwrap() == func_type) && // this means that its a decl and the signature is the same
             !(body && *self.func_decls.get(name).unwrap() == func_type &&
-                !self.func_defs.contains(name)) // this means that its a def that has only been decl before
+                !self.func_defs.contains(name))) // this means that its a def that has only been decl before
         {
             errs.push(anyhow!("{} already exists", name));
         }
 
-        if !self.check_type(return_type) {
+        if !self.does_type_exist(return_type) {
             errs.push(anyhow!("{} is not a type", return_type));
         }
 
         let mut param_names = HashSet::new();
 
         for param in params {
-            if self.check_name(&param.name) || param_names.contains(&param.name) {
-                errs.push(anyhow!("{} already exists", name));
+            if self.does_type_exist(name)
+                || self.does_name_exist(&param.name, None)
+                || param_names.contains(&param.name)
+            {
+                errs.push(anyhow!("{} already exists", param.name));
             }
             param_names.insert(param.name.clone());
 
-            if !self.check_type(&param.ty) {
+            if !self.does_type_exist(&param.ty) {
                 errs.push(anyhow!("{} is not a type", param.ty));
             }
         }
 
+        if !errs.is_empty() {
+            bail!(errs.iter()
+                .map(|err| format!("{err}"))
+                .reduce(|acc, err| format!("{acc}\n{err}"))
+                .unwrap_or_default())
+        }
+
         self.func_decls.insert(name.into(), func_type);
         if body { self.func_defs.insert(name.into()); }
+
+        Ok(())
+    }
+
+    /**
+     * this assumes that param types and names and function return type have been already checked
+     */
+    fn check_func_body(&mut self, file: &FileAST, func_type: FuncType, params: &[FuncParam], body: &BlockStmt) -> Result<()> {
+        let return_type = &func_type.return_type;
+        let params = params.iter().map(|param| &param.name).zip(func_type.params.iter());
+
+        Ok(())
+    }
+
+    fn check_expr(&mut self, file: &FileAST, id: NodeId, scope: &Scope) -> Result<()> {
+        let expr = &file.expressions[id];
+
+        match expr {
+            Expression::Ident { value } => self.check_ident(id, value, scope),
+            Expression::Int { .. } => self.check_int(id),
+            Expression::String { .. } => todo!("we don't support strings atm"),
+            Expression::Unary { op, right } => self.check_unary(id, op, *right),
+            Expression::Binary { op, left, right } => self.check_binary(id, op, *left, *right),
+            Expression::Call { func, args } => todo!(),
+        }
+    }
+
+    fn check_ident(&mut self, id: NodeId, value: &str, scope: &Scope) -> Result<()> {
+        if self.does_type_exist(value) {
+            bail!("{} is a type", value);
+        }
+
+        if let Some(ty) = self.get_type_of(value, Some(scope)) {
+            self.expr_types.insert(id, ty);
+        } else {
+            bail!("{} does not exist", value);
+        }
+
+        Ok(())
+    }
+
+    fn check_int(&mut self, id: NodeId) -> Result<()> {
+        self.expr_types.insert(id, Type::Named("i32".into()));
+
+        Ok(())
+    }
+
+    fn check_unary(&mut self, id: NodeId, _op: &Token, right: NodeId) -> Result<()> {
+        // if let Some(ty) = self.expr_types.get(&right) && Type::
+        // here you would have to check if right is a primitive but im too lazy to do it
+
+        self.expr_types.insert(id, self.expr_types.get(&right)
+            .context("right of unary expr is untyped!!")?.clone());
+
+        Ok(())
+    }
+
+    fn check_binary(&mut self, id: NodeId, _op: &Token, _left: NodeId, right: NodeId) -> Result<()> {
+        // the same as unary you have to check if left and right are primitives
+        // and also the result should be the highest of them too on a priority list
+        // something like i32 < i64 < f32 < f64
+        // this has to be checked with the c std as im unaware right now
+
+        self.expr_types.insert(id, self.expr_types.get(&right)
+            .context("right of binary expr is untyped!!")?.clone());
+
+        Ok(())
+    }
+
+    fn check_call(&mut self, id: NodeId, func: NodeId, args: &[NodeId]) -> Result<()> {
+        let Type::Func(ty) = self.expr_types.get(&func).context("func is untyped!!")? else {
+            bail!("left of call expr is not a function");
+        };
+
+        let mut errs = vec![];
+        for (i, (arg, ty)) in args.iter().zip(ty.params.iter()).enumerate() {
+            if self.expr_types.get(&arg) != Some(ty) {
+                errs.push(anyhow!("arg {} of func does not match type of param", i));
+            }
+        }
+
+        self.expr_types.insert(id, ty.return_type.clone());
 
         if !errs.is_empty() {
             bail!(errs.iter()
@@ -131,5 +242,18 @@ impl Analysis {
         }
 
         Ok(())
+    }
+}
+
+impl<'a> Scope<'a> {
+    fn get_type_of(&self, name: &str) -> Option<Type> {
+        self.symbols.get(name).cloned()
+            .or_else(|| self.parent
+                .map(|parent| parent.get_type_of(name))
+                .unwrap_or(None))
+    }
+
+    fn contains(&self, name: &str) -> bool {
+        self.get_type_of(name).is_some()
     }
 }
