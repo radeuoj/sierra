@@ -16,19 +16,43 @@ impl Compiler {
 
     pub fn compile(&self) -> String {
         format!(r#"// compiled from Sierra
-#include <stdio.h>
 #include <stdint.h>
+
+{}
 
 {}
 
 {}
             "#,
             self.compile_typedefs(&self.analysis.types),
-            self.file.body.iter()
-                .map(|stmt| self.compile_statement(stmt, 0))
-                .reduce(|acc, stmt| format!("{acc}\n{stmt}"))
-                .unwrap_or_default()
+            self.compile_func_decls(&self.analysis.func_decls),
+            self.compile_func_defs(&self.file.body),
         )
+    }
+
+    fn compile_func_decls(&self, decls: &HashMap<String, FuncType>) -> String {
+        decls.iter()
+            .map(|(name, ty)| format!("{} {}({});",
+                self.compile_type(&ty.return_type),
+                name,
+                ty.params.iter()
+                    .map(|param| self.compile_type(param))
+                    .reduce(|acc, param| format!("{acc}, {param}"))
+                    .unwrap_or_default()
+            ))
+            .reduce(|acc, decl| format!("{acc}\n{decl}"))
+            .unwrap_or_default()
+    }
+
+    fn compile_func_defs(&self, body: &[Statement]) -> String {
+        body.iter()
+            .filter(|stmt| match stmt {
+                Statement::Func { body: Some(_), .. } => true,
+                _ => false
+            })
+            .map(|stmt| self.compile_statement(stmt, 0))
+            .reduce(|acc, stmt| format!("{acc}\n{stmt}"))
+            .unwrap_or_default()
     }
 
     fn compile_statement(&self, stmt: &Statement, indent: i32) -> String {
@@ -55,12 +79,11 @@ impl Compiler {
                 ),
                 Expr { value } => format!("{};",
                     self.compile_expression(value)),
-                Func { name, return_type, params, body: None } => format!("{};",
-                    self.compile_func_decl(name, return_type.as_deref(), params)),
                 Func { name, return_type, params, body: Some(body) } => format!("{} {}",
                     self.compile_func_decl(name, return_type.as_deref(), params),
                     self.compile_block_statement(body, indent),
                 ),
+                Func { body: None, .. } => "".into(), // skip
             }
         )
     }
@@ -122,6 +145,14 @@ impl Compiler {
     fn compile_named_type(&self, ty: &NamedType) -> String {
         match ty {
             NamedType::Primitive(ty) => ty.clone(),
+        }
+    }
+
+    fn compile_type(&self, ty: &Type) -> String {
+        match ty {
+            Type::Void => "void".into(),
+            Type::Named(name) => name.into(),
+            Type::Func(_) => todo!("this is a bit more difficult :("),
         }
     }
 }
