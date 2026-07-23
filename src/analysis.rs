@@ -39,7 +39,7 @@ struct Scope<'a> {
  * so check functions do type checking and add types to all expressions
  */
 impl Analysis {
-    pub fn from(file: &FileAST) -> Result<Self> {
+    pub fn new(file: &FileAST) -> Result<Self> {
         let mut types = HashMap::new();
         types.insert("i32".into(), NamedType::Primitive("int32_t".into()));
 
@@ -107,10 +107,10 @@ impl Analysis {
             match stmt {
                 Statement::Func {
                     name,
-                    return_ty,
+                    return_type,
                     params,
                     body,
-                } => match self.check_func(name, return_ty, params, body.is_some()) {
+                } => match self.check_func(name, return_type, params, body.is_some()) {
                     Ok(()) => (),
                     Err(err) => errs.push(err),
                 },
@@ -420,7 +420,7 @@ mod tests {
         let lexer = Lexer::new(input.to_vec());
         let parser = Parser::new(lexer)?;
         let file = parser.parse_file()?;
-        Analysis::from(&file)?;
+        Analysis::new(&file)?;
         Ok(())
     }
 

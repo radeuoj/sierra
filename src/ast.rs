@@ -53,7 +53,7 @@ pub enum Statement {
     },
     Func {
         name: String,
-        return_ty: String,
+        return_type: String,
         params: Vec<FuncParam>,
         body: Option<BlockStmt>,
     },

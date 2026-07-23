@@ -210,25 +210,14 @@ impl Parser {
     fn parse_block_statement(&mut self) -> Result<BlockStmt> {
         self.expect_peek(&Token::LBrace)?;
         let mut body = vec![];
-        let mut errs = vec![];
 
         while ![Token::Eof, Token::RBrace].contains(&self.peek_token) {
-            match self.parse_statement() {
-                Ok(stmt) => body.push(stmt),
-                Err(err) => errs.push(err),
-            }
+             body.push(self.parse_statement()?);
         }
 
-        if let Err(err) = self.expect_peek(&Token::RBrace) {
-            errs.push(err);
-        }
+        self.expect_peek(&Token::RBrace)?;
 
-        if errs.is_empty() {
-            Ok(body)
-        } else {
-            bail!(errs.iter().map(|err| format!("{err}"))
-                .reduce(|acc, err| format!("{acc}\n{err}")).unwrap_or_default());
-        }
+        Ok(body)
     }
 
     fn parse_func_statement(&mut self) -> Result<NodeId> {
@@ -238,7 +227,7 @@ impl Parser {
         let params = self.parse_func_params()?;
 
         self.expect_peek(&Token::Arrow)?;
-        let return_ty = self.expect_ident()?;
+        let return_type = self.expect_ident()?;
 
         let body = if self.peek_token == Token::LBrace {
             Some(self.parse_block_statement()?)
@@ -246,7 +235,7 @@ impl Parser {
             None
         };
 
-        Ok(self.push_statement(Statement::Func { name, return_ty, params, body }))
+        Ok(self.push_statement(Statement::Func { name, return_type, params, body }))
     }
 
     fn parse_func_params(&mut self) -> Result<Vec<FuncParam>> {
@@ -285,17 +274,10 @@ impl Parser {
 
     pub fn parse_file(mut self) -> Result<FileAST> {
         let mut body = vec![];
-        let mut errs = vec![];
 
         while self.peek_token != Token::Eof {
-            match self.parse_statement() {
-                Ok(stmt) => body.push(stmt),
-                Err(err) => errs.push(err),
-            }
+            body.push(self.parse_statement()?);
         }
-
-        if !errs.is_empty() { bail!(errs.iter().map(|err| format!("{err}"))
-            .reduce(|acc, err| format!("{acc}\n{err}")).unwrap_or_default()) }
 
         Ok(FileAST {
             body,
