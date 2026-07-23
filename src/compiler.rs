@@ -2,12 +2,12 @@ use crate::ast::*;
 use crate::analysis::*;
 
 pub struct Compiler {
-    file: FileAST,
+    file: File,
     analysis: Analysis,
 }
 
 impl Compiler {
-    pub fn new(file: FileAST, analysis: Analysis) -> Self {
+    pub fn new(file: File, analysis: Analysis) -> Self {
         Self { file, analysis }
     }
 
@@ -20,14 +20,13 @@ typedef const char* str;
 
 {}
             "#, self.file.body.iter()
-                .map(|stmt| self.compile_statement(*stmt, 0))
+                .map(|stmt| self.compile_statement(stmt, 0))
                 .reduce(|acc, stmt| format!("{acc}\n{stmt}"))
                 .unwrap_or_default()
         )
     }
 
-    fn compile_statement(&self, id: NodeId, indent: i32) -> String {
-        let stmt = &self.file.statements[id];
+    fn compile_statement(&self, stmt: &Statement, indent: i32) -> String {
         use Statement::*;
 
         let indent_str = "    ".repeat(indent as usize);
@@ -37,20 +36,20 @@ typedef const char* str;
                 Let { name, ty, value } => {
                     match value {
                         Some(value) => format!("{} {} = {};",
-                            ty, name, self.compile_expression(*value)),
+                            ty, name, self.compile_expression(value)),
                         None => format!("{} {};",
                             ty, name),
                     }
                 }
                 Return { value } => format!("return {};",
-                    self.compile_expression(*value)),
-                If { cond, then, else_then } => format!("if ({}) {} {}",
-                    self.compile_expression(*cond),
+                    self.compile_expression(value)),
+                If { cond, then, else_then } => format!("if ({}) {} else {}",
+                    self.compile_expression(cond),
                     self.compile_block_statement(then, indent),
                     self.compile_block_statement(else_then, indent),
                 ),
                 Expr { value } => format!("{};",
-                    self.compile_expression(*value)),
+                    self.compile_expression(value)),
                 Func { name, return_type, params, body: None } => format!("{};",
                     self.compile_func_decl(name, return_type, params)),
                 Func { name, return_type, params, body: Some(body) } => format!("{} {}",
@@ -67,15 +66,14 @@ typedef const char* str;
             "    ".repeat(indent as usize))
     }
 
-    fn compile_statements(&self, stmts: &[NodeId], indent: i32) -> String {
+    fn compile_statements(&self, stmts: &[Statement], indent: i32) -> String {
         stmts.iter()
-            .map(|id| self.compile_statement(*id, indent))
+            .map(|stmt| self.compile_statement(stmt, indent))
             .reduce(|acc, stmt| format!("{acc}\n{stmt}"))
             .unwrap_or_default()
     }
 
-    fn compile_expression(&self, id: NodeId) -> String {
-        let expr = &self.file.expressions[id];
+    fn compile_expression(&self, expr: &Expression) -> String {
         use Expression::*;
 
         match expr {
@@ -83,14 +81,14 @@ typedef const char* str;
             Int { value } => value.into(),
             String { value } => format!("\"{value}\""),
             Unary { op, right } => format!("{op}{}",
-                self.compile_expression(*right)),
+                self.compile_expression(right)),
             Binary { op, left, right } => format!("{} {op} {}",
-                self.compile_expression(*left),
-                self.compile_expression(*right)),
+                self.compile_expression(left),
+                self.compile_expression(right)),
             Call { func, args } => format!("{}({})",
-                self.compile_expression(*func),
+                self.compile_expression(func),
                 args.iter()
-                    .map(|arg| self.compile_expression(*arg))
+                    .map(|arg| self.compile_expression(arg))
                     .reduce(|acc, s| format!("{acc}, {s}"))
                     .unwrap_or_default()),
         }

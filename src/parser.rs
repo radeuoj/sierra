@@ -8,8 +8,6 @@ use crate::ast::*;
 pub struct Parser {
     lexer: Lexer,
     peek_token: Token,
-    expressions: Vec<Expression>,
-    statements: Vec<Statement>,
 }
 
 #[derive(PartialEq, PartialOrd)]
@@ -44,8 +42,6 @@ impl Parser {
         Ok(Self {
             peek_token: lexer.next_token()?,
             lexer,
-            expressions: vec![],
-            statements: vec![],
         })
     }
 
@@ -73,19 +69,7 @@ impl Parser {
         BindingPower::get(&self.peek_token)
     }
 
-    fn push_expression(&mut self, expr: Expression) -> NodeId {
-        let id = self.expressions.len();
-        self.expressions.push(expr);
-        id
-    }
-
-    fn push_statement(&mut self, stmt: Statement) -> NodeId {
-        let id = self.statements.len();
-        self.statements.push(stmt);
-        id
-    }
-
-    fn parse_expression(&mut self, bpow: BindingPower) -> Result<NodeId> {
+    fn parse_expression(&mut self, bpow: BindingPower) -> Result<Expression> {
         let mut left = match self.next_token()? {
             Token::Ident(name) => self.parse_ident(name),
             Token::Int(lit) => self.parse_int(lit),
@@ -108,37 +92,37 @@ impl Parser {
         Ok(left)
     }
 
-    fn parse_ident(&mut self, name: String) -> NodeId {
-        self.push_expression(Expression::Ident { value: name })
+    fn parse_ident(&mut self, name: String) -> Expression {
+        Expression::Ident { value: name }
     }
 
-    fn parse_int(&mut self, lit: String) -> NodeId {
-        self.push_expression(Expression::Int { value: lit })
+    fn parse_int(&mut self, lit: String) -> Expression {
+        Expression::Int { value: lit }
     }
 
-    fn parse_string(&mut self, lit: String) -> NodeId {
-        self.push_expression(Expression::String { value: lit })
+    fn parse_string(&mut self, lit: String) -> Expression {
+        Expression::String { value: lit }
     }
 
-    fn parse_unary_expression(&mut self, op: Token) -> Result<NodeId> {
+    fn parse_unary_expression(&mut self, op: Token) -> Result<Expression> {
         let right = self.parse_expression(BindingPower::Unary)?;
-        Ok(self.push_expression(Expression::Unary { op, right, }))
+        Ok(Expression::Unary { op, right: right.into() })
     }
 
-    fn parse_binary_expression(&mut self, left: NodeId) -> Result<NodeId> {
+    fn parse_binary_expression(&mut self, left: Expression) -> Result<Expression> {
         let op = self.next_token()?;
         let bpow = BindingPower::get(&op);
         let right = self.parse_expression(bpow)?;
 
-        Ok(self.push_expression(Expression::Binary { op, left, right }))
+        Ok(Expression::Binary { op, left: left.into(), right: right.into() })
     }
 
-    fn parse_call_expression(&mut self, left: NodeId) -> Result<NodeId> {
+    fn parse_call_expression(&mut self, left: Expression) -> Result<Expression> {
         let args = self.parse_call_arguments()?;
-        Ok(self.push_expression(Expression::Call { func: left, args }))
+        Ok(Expression::Call { func: left.into(), args })
     }
 
-    fn parse_call_arguments(&mut self) -> Result<Vec<NodeId>> {
+    fn parse_call_arguments(&mut self) -> Result<Vec<Expression>> {
         self.next_token()?; // (
         let mut args = vec![];
 
@@ -158,7 +142,7 @@ impl Parser {
         Ok(args)
     }
 
-    fn parse_statement(&mut self) -> Result<NodeId> {
+    fn parse_statement(&mut self) -> Result<Statement> {
         match self.peek_token {
             Token::Let => self.parse_let_statement(),
             Token::Return => self.parse_return_statement(),
@@ -168,7 +152,7 @@ impl Parser {
         }
     }
 
-    fn parse_let_statement(&mut self) -> Result<NodeId> {
+    fn parse_let_statement(&mut self) -> Result<Statement> {
         self.next_token()?; // let
         let name = self.expect_ident()?;
 
@@ -183,16 +167,16 @@ impl Parser {
             _ => None,
         };
 
-        Ok(self.push_statement(Statement::Let { name, ty, value }))
+        Ok(Statement::Let { name, ty, value })
     }
 
-    fn parse_return_statement(&mut self) -> Result<NodeId> {
+    fn parse_return_statement(&mut self) -> Result<Statement> {
         self.next_token()?; // return
         let value = self.parse_expression(BindingPower::Lowest)?;
-        Ok(self.push_statement(Statement::Return { value }))
+        Ok(Statement::Return { value })
     }
 
-    fn parse_if_statement(&mut self) -> Result<NodeId> {
+    fn parse_if_statement(&mut self) -> Result<Statement> {
         self.next_token()?; // if
         let cond = self.parse_expression(BindingPower::Lowest)?;
         let then = self.parse_block_statement()?;
@@ -204,7 +188,7 @@ impl Parser {
             vec![]
         };
 
-        Ok(self.push_statement(Statement::If { cond, then, else_then }))
+        Ok(Statement::If { cond, then, else_then })
     }
 
     fn parse_block_statement(&mut self) -> Result<BlockStmt> {
@@ -220,7 +204,7 @@ impl Parser {
         Ok(body)
     }
 
-    fn parse_func_statement(&mut self) -> Result<NodeId> {
+    fn parse_func_statement(&mut self) -> Result<Statement> {
         self.next_token()?; // fn
         let name = self.expect_ident()?;
 
@@ -235,7 +219,7 @@ impl Parser {
             None
         };
 
-        Ok(self.push_statement(Statement::Func { name, return_type, params, body }))
+        Ok(Statement::Func { name, return_type, params, body })
     }
 
     fn parse_func_params(&mut self) -> Result<Vec<FuncParam>> {
@@ -267,23 +251,19 @@ impl Parser {
         Ok(FuncParam { name, ty })
     }
 
-    fn parse_expr_statement(&mut self) -> Result<NodeId> {
+    fn parse_expr_statement(&mut self) -> Result<Statement> {
         let value = self.parse_expression(BindingPower::Lowest)?;
-        Ok(self.push_statement(Statement::Expr { value }))
+        Ok(Statement::Expr { value })
     }
 
-    pub fn parse_file(mut self) -> Result<FileAST> {
+    pub fn parse_file(mut self) -> Result<File> {
         let mut body = vec![];
 
         while self.peek_token != Token::Eof {
             body.push(self.parse_statement()?);
         }
 
-        Ok(FileAST {
-            body,
-            expressions: self.expressions,
-            statements: self.statements,
-        })
+        Ok(File { body })
     }
 }
 

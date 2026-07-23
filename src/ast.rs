@@ -1,8 +1,8 @@
+use std::hash::{DefaultHasher, Hash, Hasher};
+
 use crate::token::Token;
 
-pub type NodeId = usize;
-
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Eq, Hash)]
 pub enum Expression {
     Ident {
         value: String,
@@ -15,20 +15,23 @@ pub enum Expression {
     },
     Unary {
         op: Token,
-        right: NodeId,
+        right: Box<Expression>,
     },
     Binary {
         op: Token,
-        left: NodeId,
-        right: NodeId,
+        left: Box<Expression>,
+        right: Box<Expression>,
     },
     Call {
-        func: NodeId,
-        args: Vec<NodeId>,
-    }
+        func: Box<Expression>,
+        args: Vec<Expression>,
+    },
 }
 
-pub type BlockStmt = Vec<NodeId>;
+#[derive(Debug, PartialEq, Eq, Hash, Clone, Copy)]
+pub struct ExprHash(u64);
+
+pub type BlockStmt = Vec<Statement>;
 
 #[derive(Debug, PartialEq)]
 pub struct FuncParam {
@@ -41,13 +44,13 @@ pub enum Statement {
     Let {
         name: String,
         ty: String,
-        value: Option<NodeId>,
+        value: Option<Expression>,
     },
     Return {
-        value: NodeId,
+        value: Expression,
     },
     If {
-        cond: NodeId,
+        cond: Expression,
         then: BlockStmt,
         else_then: BlockStmt,
     },
@@ -58,13 +61,19 @@ pub enum Statement {
         body: Option<BlockStmt>,
     },
     Expr {
-        value: NodeId,
+        value: Expression,
     }
 }
 
 #[derive(Debug)]
-pub struct FileAST {
-    pub body: Vec<NodeId>,
-    pub expressions: Vec<Expression>,
-    pub statements: Vec<Statement>,
+pub struct File {
+    pub body: Vec<Statement>,
+}
+
+impl Expression {
+    pub fn get_hash(&self) -> ExprHash {
+        let mut hasher = DefaultHasher::new();
+        self.hash(&mut hasher);
+        ExprHash(hasher.finish())
+    }
 }
