@@ -45,6 +45,16 @@ impl Parser {
         })
     }
 
+    pub fn parse_file(mut self) -> Result<File> {
+        let mut body = vec![];
+
+        while self.peek_token != Token::Eof {
+            body.push(self.parse_statement()?);
+        }
+
+        Ok(File { body })
+    }
+
     fn next_token(&mut self) -> Result<Token> {
         Ok(std::mem::replace(&mut self.peek_token, self.lexer.next_token()?))
     }
@@ -157,7 +167,7 @@ impl Parser {
         let name = self.expect_ident()?;
 
         self.expect_peek(&Token::Colon)?;
-        let ty = self.expect_ident()?;
+        let ty = self.parse_type()?;
 
         let value = match self.peek_token {
             Token::Assign => {
@@ -212,8 +222,8 @@ impl Parser {
 
         let return_type = if self.peek_token == Token::Arrow {
             self.next_token()?;
-            Some(self.expect_ident()?)
-        } else { None };
+            self.parse_type()?
+        } else { Type::Void };
 
         let body = if self.peek_token == Token::LBrace {
             Some(self.parse_block_statement()?)
@@ -248,7 +258,7 @@ impl Parser {
         let name = self.expect_ident()?;
 
         self.expect_peek(&Token::Colon)?;
-        let ty = self.expect_ident()?;
+        let ty = self.parse_type()?;
 
         Ok(FuncParam { name, ty })
     }
@@ -258,14 +268,32 @@ impl Parser {
         Ok(Statement::Expr { value })
     }
 
-    pub fn parse_file(mut self) -> Result<File> {
-        let mut body = vec![];
-
-        while self.peek_token != Token::Eof {
-            body.push(self.parse_statement()?);
+    fn parse_type(&mut self) -> Result<Type> {
+        match &self.peek_token {
+            token => match self.expect_primitive() {
+                Ok(ty) => {
+                    self.next_token()?;
+                    Ok(ty)
+                }
+                Err(_) => bail!("expected a type but got {}", token),
+            },
         }
+    }
 
-        Ok(File { body })
+    fn expect_primitive(&self) -> Result<Type> {
+        use Primitive::*;
+
+        Ok(match &self.peek_token {
+            Token::I8 => Type::Primitive(I8),
+            Token::U8 => Type::Primitive(U8),
+            Token::I16 => Type::Primitive(I16),
+            Token::U16 => Type::Primitive(U16),
+            Token::I32 => Type::Primitive(I32),
+            Token::U32 => Type::Primitive(U32),
+            Token::I64 => Type::Primitive(I64),
+            Token::U64 => Type::Primitive(U64),
+            token => bail!("expected a primitive but got {}", token),
+        })
     }
 }
 

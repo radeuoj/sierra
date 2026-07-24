@@ -18,13 +18,21 @@ impl Compiler {
         format!(r#"// compiled from Sierra
 #include <stdint.h>
 
-{}
+typedef int8_t i8;
+typedef uint8_t u8;
+typedef int16_t i16;
+typedef uint16_t u16;
+typedef int32_t i32;
+typedef uint32_t u32;
+typedef int64_t i64;
+typedef uint64_t u64;
+typedef float f32;
+typedef double f64;
 
 {}
 
 {}
             "#,
-            self.compile_typedefs(&self.analysis.types),
             self.compile_func_decls(&self.analysis.func_decls),
             self.compile_func_defs(&self.file.body),
         )
@@ -65,9 +73,9 @@ impl Compiler {
                 Let { name, ty, value } => {
                     match value {
                         Some(value) => format!("{} {} = {};",
-                            ty, name, self.compile_expression(value)),
+                            self.compile_type(ty), name, self.compile_expression(value)),
                         None => format!("{} {};",
-                            ty, name),
+                            self.compile_type(ty), name),
                     }
                 }
                 Return { value } => format!("return {};",
@@ -80,7 +88,7 @@ impl Compiler {
                 Expr { value } => format!("{};",
                     self.compile_expression(value)),
                 Func { name, return_type, params, body: Some(body) } => format!("{} {}",
-                    self.compile_func_decl(name, return_type.as_deref(), params),
+                    self.compile_func_decl(name, return_type, params),
                     self.compile_block_statement(body, indent),
                 ),
                 Func { body: None, .. } => "".into(), // skip
@@ -122,9 +130,9 @@ impl Compiler {
         }
     }
 
-    fn compile_func_decl(&self, name: &str, return_type: Option<&str>, params: &[FuncParam]) -> String {
+    fn compile_func_decl(&self, name: &str, return_type: &Type, params: &[FuncParam]) -> String {
         format!("{} {}({})",
-            return_type.unwrap_or("void"), name,
+            self.compile_type(return_type), name,
             params.iter()
                 .map(|param| self.compile_param(param))
                 .reduce(|acc, s| format!("{acc}, {s}"))
@@ -132,27 +140,25 @@ impl Compiler {
     }
 
     fn compile_param(&self, param: &FuncParam) -> String {
-        format!("{} {}", param.ty, param.name)
-    }
-
-    fn compile_typedefs(&self, types: &HashMap<String, NamedType>) -> String {
-        types.iter()
-            .map(|(to, from)| format!("typedef {} {};", self.compile_named_type(from), to))
-            .reduce(|acc, ty| format!("{acc}\n{ty}"))
-            .unwrap_or_default()
-    }
-
-    fn compile_named_type(&self, ty: &NamedType) -> String {
-        match ty {
-            NamedType::Primitive(ty) => ty.clone(),
-        }
+        format!("{} {}", self.compile_type(&param.ty), param.name)
     }
 
     fn compile_type(&self, ty: &Type) -> String {
         match ty {
-            Type::Void => "void".into(),
-            Type::Named(name) => name.into(),
+            Type::Void => "void",
+            Type::Primitive(ty) => match ty {
+                Primitive::I8 => "i8",
+                Primitive::U8 => "u8",
+                Primitive::I16 => "i16",
+                Primitive::U16 => "u16",
+                Primitive::I32 => "i32",
+                Primitive::U32 => "u32",
+                Primitive::I64 => "i64",
+                Primitive::U64 => "u64",
+                Primitive::F32 => "f32",
+                Primitive::F64 => "f64",
+            }
             Type::Func(_) => todo!("this is a bit more difficult :("),
-        }
+        }.into()
     }
 }

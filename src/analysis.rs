@@ -6,28 +6,9 @@ use crate::{ast::*, token::Token};
 
 #[derive(Debug)]
 pub struct Analysis {
-    pub types: HashMap<String, NamedType>, // named types
     pub expr_types: HashMap<ExprHash, Type>,
     pub func_decls: HashMap<String, FuncType>,
     pub func_defs: HashSet<String>, // whether this function has a definition already
-}
-
-#[derive(Debug)]
-pub enum NamedType {
-    Primitive(String),
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub struct FuncType {
-    pub return_type: Type,
-    pub params: Vec<Type>,
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub enum Type {
-    Void,
-    Named(String),
-    Func(Box<FuncType>),
 }
 
 struct Scope<'a> {
@@ -41,18 +22,7 @@ struct Scope<'a> {
  */
 impl Analysis {
     pub fn new(file: &File) -> Result<Self> {
-        let mut types = HashMap::new();
-        types.insert("i8".into(), NamedType::Primitive("int8_t".into()));
-        types.insert("u8".into(), NamedType::Primitive("uint8_t".into()));
-        types.insert("i16".into(), NamedType::Primitive("int16_t".into()));
-        types.insert("u16".into(), NamedType::Primitive("uint16_t".into()));
-        types.insert("i32".into(), NamedType::Primitive("int32_t".into()));
-        types.insert("u32".into(), NamedType::Primitive("uint32_t".into()));
-        types.insert("i64".into(), NamedType::Primitive("int64_t".into()));
-        types.insert("u64".into(), NamedType::Primitive("uint64_t".into()));
-
         let mut analysis = Self {
-            types,
             expr_types: HashMap::new(),
             func_decls: HashMap::new(),
             func_defs: HashSet::new(),
@@ -92,10 +62,6 @@ impl Analysis {
             || scope.map_or(false, |scope| scope.contains(name))
     }
 
-    fn does_type_exist(&self, name: &str) -> bool {
-        self.types.contains_key(name)
-    }
-
     fn get_type_of(&self, name: &str, scope: Option<&Scope>) -> Option<Type> {
         if let Some(func_type) = self.func_decls.get(name) {
             Some(Type::Func(Box::new(func_type.clone())))
@@ -114,7 +80,7 @@ impl Analysis {
                     return_type,
                     params,
                     body,
-                } => match self.check_func(name, return_type.as_deref(), params, body.is_some()) {
+                } => match self.check_func(name, return_type, params, body.is_some()) {
                     Ok(()) => (),
                     Err(err) => errs.push(err),
                 },
@@ -135,46 +101,45 @@ impl Analysis {
     fn check_func(
         &mut self,
         name: &str,
-        return_type: Option<&str>,
+        return_type: &Type,
         params: &[FuncParam],
         body: bool,
     ) -> Result<()> {
         let mut errs = vec![];
 
         let func_type = FuncType {
-            return_type: return_type.map_or(Type::Void, |ty| Type::Named(ty.into())),
+            return_type: return_type.clone(),
             params: params.iter()
-                .map(|param| Type::Named(param.ty.clone()))
+                .map(|param| param.ty.clone())
                 .collect(),
         };
 
         // TODO: wtf is this bruh
-        if self.types.contains_key(name) || (self.func_decls.contains_key(name) &&
+        if self.func_decls.contains_key(name) &&
             !(!body && *self.func_decls.get(name).unwrap() == func_type) && // this means that its a decl and the signature is the same
             !(body && *self.func_decls.get(name).unwrap() == func_type &&
-                !self.func_defs.contains(name))) // this means that its a def that has only been decl before
+                !self.func_defs.contains(name)) // this means that its a def that has only been decl before
         {
             errs.push(anyhow!("{} already exists", name));
         }
 
-        if let Some(return_type) = return_type && !self.does_type_exist(return_type) {
-            errs.push(anyhow!("{} is not a type", return_type));
-        }
+        // if !self.does_type_exist(return_type) {
+        //     errs.push(anyhow!("{} is not a type", return_type));
+        // }
 
         let mut param_names = HashSet::new();
 
         for param in params {
-            if self.does_type_exist(&param.name)
-                || self.does_name_exist(&param.name, None)
+            if self.does_name_exist(&param.name, None)
                 || param_names.contains(&param.name)
             {
                 errs.push(anyhow!("{} already exists", param.name));
             }
             param_names.insert(param.name.clone());
 
-            if !self.does_type_exist(&param.ty) {
-                errs.push(anyhow!("{} is not a type", param.ty));
-            }
+            // if !self.does_type_exist(&param.ty) {
+            //     errs.push(anyhow!("{} is not a type", param.ty));
+            // }
         }
 
         if !errs.is_empty() {
@@ -219,9 +184,9 @@ impl Analysis {
     }
 
     fn check_ident(&mut self, expr: &Expression, value: &str, scope: &Scope) -> Result<()> {
-        if self.does_type_exist(value) {
-            bail!("{} is a type", value);
-        }
+        // if self.does_type_exist(value) {
+        //     bail!("{} is a type", value);
+        // }
 
         if let Some(ty) = self.get_type_of(value, Some(scope)) {
             self.expr_types.insert(expr.get_hash(), ty);
@@ -233,7 +198,7 @@ impl Analysis {
     }
 
     fn check_int(&mut self, expr: &Expression) -> Result<()> {
-        self.expr_types.insert(expr.get_hash(), Type::Named("i32".into()));
+        self.expr_types.insert(expr.get_hash(), Type::Primitive(Primitive::I32));
 
         Ok(())
     }
@@ -329,23 +294,21 @@ impl Analysis {
         }
     }
 
-    fn check_let(&mut self, file: &File, name: &str, ty: &str, value: Option<&Expression>, scope: &mut Scope) -> Result<()> {
-        if !self.does_type_exist(ty) {
-            bail!("{} does not exist", ty);
-        }
-
-        let ty = Type::Named(ty.into());
+    fn check_let(&mut self, file: &File, name: &str, ty: &Type, value: Option<&Expression>, scope: &mut Scope) -> Result<()> {
+        // if !self.does_type_exist(ty) {
+        //     bail!("{} does not exist", ty);
+        // }
 
         if let Some(value) = value {
             self.check_expr(file, value, scope)?;
             let value_type = self.expr_types.get(&value.get_hash()).unwrap();
 
-            if *value_type != ty {
+            if value_type != ty {
                 bail!("expected expr of type {:?} but got {:?}", ty, value_type);
             }
         }
 
-        if self.does_name_exist(name, Some(scope)) || self.does_type_exist(name) {
+        if self.does_name_exist(name, Some(scope)) {
             bail!("{} already exists", name);
         }
 
