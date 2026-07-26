@@ -70,6 +70,13 @@ impl Analysis {
         }
     }
 
+    /**
+     * panics if expression has not been checked
+     */
+    fn get_type_of_expr(&self, expr: &Expression) -> &Type {
+        self.expr_types.get(&expr.get_hash()).unwrap()
+    }
+
     fn check_top_level(&mut self, file: &File) -> Result<()> {
         let mut errs = vec![];
 
@@ -203,27 +210,31 @@ impl Analysis {
         Ok(())
     }
 
-    fn check_unary(&mut self, file: &File, expr: &Expression, _op: &Token, right: &Expression, scope: &Scope) -> Result<()> {
-        // if let Some(ty) = self.expr_types.get(&right) && Type::
-        // here you would have to check if right is a primitive but im too lazy to do it
-
+    fn check_unary(&mut self, file: &File, expr: &Expression, op: &Token, right: &Expression, scope: &Scope) -> Result<()> {
         self.check_expr(file, right, scope)?;
 
-        self.expr_types.insert(expr.get_hash(), self.expr_types.get(&right.get_hash()).unwrap().clone());
+        let ty = match self.get_type_of_expr(right) {
+            ty @ Type::Primitive(_) => ty,
+            ty => bail!("type {} is incompatible with unary operator {}", ty, op),
+        };
+
+        self.expr_types.insert(expr.get_hash(), ty.clone());
 
         Ok(())
     }
 
-    fn check_binary(&mut self, file: &File, expr: &Expression, _op: &Token, left: &Expression, right: &Expression, scope: &Scope) -> Result<()> {
-        // the same as unary you have to check if left and right are primitives
-        // and also the result should be the highest of them too on a priority list
-        // something like i32 < i64 < f32 < f64
-        // this has to be checked with the c std as im unaware right now
-
+    fn check_binary(&mut self, file: &File, expr: &Expression, op: &Token, left: &Expression, right: &Expression, scope: &Scope) -> Result<()> {
         self.check_expr(file, left, scope)?;
         self.check_expr(file, right, scope)?;
 
-        self.expr_types.insert(expr.get_hash(), self.expr_types.get(&right.get_hash()).unwrap().clone());
+        let (left_ty, right_ty) = match (self.get_type_of_expr(left), self.get_type_of_expr(right)) {
+            (Type::Primitive(left_ty), Type::Primitive(right_ty)) => (left_ty, right_ty),
+            (left_ty, right_ty) => bail!("types {} and {} are incompatible with binary operator {}", left_ty, right_ty, op),
+        };
+
+        let return_ty = Type::Primitive(left_ty.max(right_ty).clone());
+
+        self.expr_types.insert(expr.get_hash(), return_ty);
 
         Ok(())
     }
@@ -304,7 +315,7 @@ impl Analysis {
             let value_type = self.expr_types.get(&value.get_hash()).unwrap();
 
             if value_type != ty {
-                bail!("expected expr of type {:?} but got {:?}", ty, value_type);
+                bail!("expected expr of type {} but got {}", ty, value_type);
             }
         }
 
@@ -322,7 +333,7 @@ impl Analysis {
         let value_type = self.expr_types.get(&value.get_hash()).unwrap();
 
         if *value_type != scope.return_type {
-            bail!("return expected type {:?} but instead found type {:?}", scope.return_type, value_type);
+            bail!("return expected type {} but instead found type {}", scope.return_type, value_type);
         }
 
         Ok(())
