@@ -26,6 +26,10 @@ pub enum Expression {
         func: Box<Expression>,
         args: Vec<Expression>,
     },
+    At {
+        left: Box<Expression>,
+        right: Box<Expression>,
+    }
 }
 
 impl Expression {
@@ -78,12 +82,13 @@ pub struct File {
     pub body: Vec<Statement>,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum Type {
     Void,
     Primitive(Primitive),
     Func(Box<FuncType>),
-    Ptr(Box<Type>)
+    Ptr(Box<Type>),
+    Array(Box<Type>, u64),
 }
 
 impl Display for Type {
@@ -93,11 +98,12 @@ impl Display for Type {
             Type::Primitive(ty) => write!(f, "{ty}"),
             Type::Func(ty) => write!(f, "{ty}"),
             Type::Ptr(ty) => write!(f, "*{ty}"),
+            Type::Array(ty, size) => write!(f, "[{size}]{ty}"),
         }
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct FuncType {
     pub return_type: Type,
     pub params: Vec<Type>,
@@ -115,7 +121,7 @@ impl Display for FuncType {
     }
 }
 
-#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Clone)]
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Clone, Hash)]
 pub enum Primitive {
     I8,
     U8,
@@ -144,4 +150,11 @@ impl Display for Primitive {
             Primitive::F64 => "f64",
         })
     }
+}
+
+pub fn hash_array(ty: &Type, size: u64) -> u64 {
+    let mut hasher = DefaultHasher::new();
+    ty.hash(&mut hasher);
+    size.hash(&mut hasher);
+    hasher.finish()
 }

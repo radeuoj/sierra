@@ -68,6 +68,7 @@ impl Lexer {
             } else {
                 Slash
             }
+            '%' => Percent,
             '!' => if self.peek_char() == '=' {
                 self.read_char();
                 NotEqual
@@ -80,6 +81,8 @@ impl Lexer {
             ';' => Semicolon,
             '(' => LParen,
             ')' => RParen,
+            '[' => LBracket,
+            ']' => RBracket,
             '{' => LBrace,
             '}' => RBrace,
             '"' => Token::String(self.read_string()?.to_string()),

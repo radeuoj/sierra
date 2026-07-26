@@ -9,6 +9,7 @@ pub struct Analysis {
     pub expr_types: HashMap<ExprHash, Type>,
     pub func_decls: HashMap<String, FuncType>,
     pub func_defs: HashSet<String>, // whether this function has a definition already
+    pub arrays: HashSet<(Type, u64)>,
 }
 
 struct Scope<'a> {
@@ -26,6 +27,7 @@ impl Analysis {
             expr_types: HashMap::new(),
             func_decls: HashMap::new(),
             func_defs: HashSet::new(),
+            arrays: HashSet::new(),
         };
 
         analysis.check_top_level(file)?;
@@ -39,7 +41,7 @@ impl Analysis {
                     body,
                     ..
                 } => if let Some(body) = body && let Err(err)
-                        = analysis.check_func_body(file, analysis.func_decls.get(name).unwrap().clone(), params, body)
+                        = analysis.check_func_body(analysis.func_decls.get(name).unwrap().clone(), params, body)
                 {
                     errs.push(err);
                 }
@@ -121,6 +123,8 @@ impl Analysis {
                 .collect(),
         };
 
+        self.check_type(&Type::Func(Box::new(func_type.clone())));
+
         // TODO: wtf is this bruh
         if self.func_decls.contains_key(name) &&
             !(!body && *self.func_decls.get(name).unwrap() == func_type) && // this means that its a decl and the signature is the same
@@ -165,7 +169,7 @@ impl Analysis {
     /**
      * this assumes that param types and names and function return type have been already checked
      */
-    fn check_func_body(&mut self, file: &File, func_type: FuncType, params: &[FuncParam], body: &BlockStmt) -> Result<()> {
+    fn check_func_body(&mut self, func_type: FuncType, params: &[FuncParam], body: &BlockStmt) -> Result<()> {
         let return_type = &func_type.return_type;
         let params = params.iter().map(|param| &param.name).zip(func_type.params.iter());
         let mut scope = Scope::new(return_type.clone());
@@ -174,19 +178,20 @@ impl Analysis {
             scope.add(param, ty.clone());
         }
 
-        self.check_block(file, body, &mut scope)?;
+        self.check_block(body, &mut scope)?;
 
         Ok(())
     }
 
-    fn check_expr(&mut self, file: &File, expr: &Expression, scope: &Scope) -> Result<()> {
+    fn check_expr(&mut self, expr: &Expression, scope: &Scope) -> Result<()> {
         match expr {
             Expression::Ident { value } => self.check_ident(expr, value, scope),
             Expression::Int { .. } => self.check_int(expr),
             Expression::String { .. } => todo!("we don't support strings atm"),
-            Expression::Unary { op, right } => self.check_unary(file, expr, op, right, scope),
-            Expression::Binary { op, left, right } => self.check_binary(file, expr, op, left, right, scope),
-            Expression::Call { func, args } => self.check_call(file, expr, func, args, scope),
+            Expression::Unary { op, right } => self.check_unary(expr, op, right, scope),
+            Expression::Binary { op, left, right } => self.check_binary(expr, op, left, right, scope),
+            Expression::Call { func, args } => self.check_call(expr, func, args, scope),
+            Expression::At { left, right } => self.check_at(expr, left, right, scope),
         }
     }
 
@@ -210,8 +215,8 @@ impl Analysis {
         Ok(())
     }
 
-    fn check_unary(&mut self, file: &File, expr: &Expression, op: &Token, right: &Expression, scope: &Scope) -> Result<()> {
-        self.check_expr(file, right, scope)?;
+    fn check_unary(&mut self, expr: &Expression, op: &Token, right: &Expression, scope: &Scope) -> Result<()> {
+        self.check_expr(right, scope)?;
 
         let ty = match (op, self.get_type_of_expr(right)) {
             (Token::Ampersand, ty) => Type::Ptr(Box::new(ty.clone())),
@@ -220,14 +225,15 @@ impl Analysis {
             (op, ty) => bail!("type {} is incompatible with unary operator {}", ty, op),
         };
 
+        self.check_type(&ty);
         self.expr_types.insert(expr.get_hash(), ty);
 
         Ok(())
     }
 
-    fn check_binary(&mut self, file: &File, expr: &Expression, op: &Token, left: &Expression, right: &Expression, scope: &Scope) -> Result<()> {
-        self.check_expr(file, left, scope)?;
-        self.check_expr(file, right, scope)?;
+    fn check_binary(&mut self, expr: &Expression, op: &Token, left: &Expression, right: &Expression, scope: &Scope) -> Result<()> {
+        self.check_expr(left, scope)?;
+        self.check_expr(right, scope)?;
 
         let (left_ty, right_ty) = match (self.get_type_of_expr(left), self.get_type_of_expr(right)) {
             (Type::Primitive(left_ty), Type::Primitive(right_ty)) => (left_ty, right_ty),
@@ -236,13 +242,14 @@ impl Analysis {
 
         let return_ty = Type::Primitive(left_ty.max(right_ty).clone());
 
+        self.check_type(&return_ty);
         self.expr_types.insert(expr.get_hash(), return_ty);
 
         Ok(())
     }
 
-    fn check_call(&mut self, file: &File, expr: &Expression, func: &Expression, args: &[Expression], scope: &Scope) -> Result<()> {
-        self.check_expr(file, func, scope)?;
+    fn check_call(&mut self, expr: &Expression, func: &Expression, args: &[Expression], scope: &Scope) -> Result<()> {
+        self.check_expr(func, scope)?;
 
         let Type::Func(ty) = self.expr_types.get(&func.get_hash()).unwrap() else {
             bail!("left of call expr is not a function");
@@ -256,7 +263,7 @@ impl Analysis {
 
         let mut errs = vec![];
         for (i, (arg, ty)) in args.iter().zip(ty.params.iter()).enumerate() {
-            if let Err(err) = self.check_expr(file, arg, scope) {
+            if let Err(err) = self.check_expr(arg, scope) {
                 errs.push(err);
             }
 
@@ -277,43 +284,52 @@ impl Analysis {
         Ok(())
     }
 
-    fn check_block(&mut self, file: &File, block: &BlockStmt, scope: &mut Scope) -> Result<()> {
-        let mut errs = vec![];
+    fn check_at(&mut self, expr: &Expression, left: &Expression, right: &Expression, scope: &Scope) -> Result<()> {
+        self.check_expr(left, scope)?;
+        self.check_expr(right, scope)?;
+
+        let ty = match self.get_type_of_expr(left) {
+            Type::Array(ty, _) => &**ty,
+            ty => bail!("at expression expected an array but got {}", ty),
+        };
+
+        match self.get_type_of_expr(right) {
+            Type::Primitive(_) => (),
+            ty => bail!("at expression expected a primitive but got {}", ty),
+        }
+
+        self.expr_types.insert(expr.get_hash(), ty.clone());
+
+        Ok(())
+    }
+
+    fn check_block(&mut self, block: &BlockStmt, scope: &mut Scope) -> Result<()> {
         let mut scope = scope.get_child();
 
         for stmt in block {
-            if let Err(err) = self.check_stmt(file, stmt, &mut scope) {
-                errs.push(err);
-            }
-        }
-
-        if !errs.is_empty() {
-            bail!(errs.iter()
-                .map(|err| format!("{err}"))
-                .reduce(|acc, err| format!("{acc}\n{err}"))
-                .unwrap_or_default())
+            self.check_stmt(stmt, &mut scope)?;
         }
 
         Ok(())
     }
 
-    fn check_stmt(&mut self, file: &File, stmt: &Statement, scope: &mut Scope) -> Result<()> {
+    fn check_stmt(&mut self, stmt: &Statement, scope: &mut Scope) -> Result<()> {
         match stmt {
-            Statement::Let { name, ty, value } => self.check_let(file, name, ty, value.into(), scope),
-            Statement::Return { value } => self.check_return(file, value, scope),
-            Statement::If { cond, then, else_then } => self.check_if(file, cond, then, else_then, scope),
+            Statement::Let { name, ty, value } => self.check_let(name, ty, value.into(), scope),
+            Statement::Return { value } => self.check_return(value, scope),
+            Statement::If { cond, then, else_then } => self.check_if(cond, then, else_then, scope),
             Statement::Func { .. } => bail!("funcs are only allowed at top level"),
-            Statement::Expr { value } => self.check_expr(file, value, scope),
+            Statement::Expr { value } => self.check_expr(value, scope),
         }
     }
 
-    fn check_let(&mut self, file: &File, name: &str, ty: &Option<Type>, value: Option<&Expression>, scope: &mut Scope) -> Result<()> {
+    fn check_let(&mut self, name: &str, ty: &Option<Type>, value: Option<&Expression>, scope: &mut Scope) -> Result<()> {
         // if !self.does_type_exist(ty) {
         //     bail!("{} does not exist", ty);
         // }
 
         if let Some(value) = value {
-            self.check_expr(file, value, scope)?;
+            self.check_expr(value, scope)?;
             let value_type = self.expr_types.get(&value.get_hash()).unwrap();
 
             if let Some(ty) = ty && value_type != ty {
@@ -327,6 +343,10 @@ impl Analysis {
             bail!("{} already exists", name);
         }
 
+        if let Some(ty) = ty {
+            self.check_type(ty);
+        }
+
         scope.add(name, match ty {
             Some(ty) => ty.clone(),
             None => self.get_type_of_expr(value.unwrap()).clone(),
@@ -335,8 +355,8 @@ impl Analysis {
         Ok(())
     }
 
-    fn check_return(&mut self, file: &File, value: &Expression, scope: &mut Scope) -> Result<()> {
-        self.check_expr(file, value, scope)?;
+    fn check_return(&mut self, value: &Expression, scope: &mut Scope) -> Result<()> {
+        self.check_expr(value, scope)?;
         let value_type = self.expr_types.get(&value.get_hash()).unwrap();
 
         if *value_type != scope.return_type {
@@ -346,16 +366,33 @@ impl Analysis {
         Ok(())
     }
 
-    #[allow(unused_variables)]
-    fn check_if(&mut self, file: &File, cond: &Expression, then: &BlockStmt, else_then: &BlockStmt, scope: &mut Scope) -> Result<()> {
-        self.check_expr(file, cond, scope)?;
-        let cond_type = self.expr_types.get(&cond.get_hash()).unwrap();
-        // check if cond_type is primitive
+    fn check_if(&mut self, cond: &Expression, then: &BlockStmt, else_then: &BlockStmt, scope: &mut Scope) -> Result<()> {
+        self.check_expr(cond, scope)?;
 
-        self.check_block(file, then, scope)?;
-        self.check_block(file, else_then, scope)?;
+        match self.get_type_of_expr(cond) {
+            Type::Primitive(_) => (),
+            ty => bail!("if statement condition must be a primitive but instead got {}", ty),
+        }
+
+        self.check_block(then, scope)?;
+        self.check_block(else_then, scope)?;
 
         Ok(())
+    }
+
+    fn check_type(&mut self, ty: &Type) {
+        match ty {
+            Type::Func(ty) => {
+                self.check_type(&ty.return_type);
+                for param in &ty.params { self.check_type(param); }
+            }
+            Type::Ptr(ty) => self.check_type(ty),
+            Type::Array(ty, size) => {
+                self.check_type(ty);
+                self.arrays.insert((*ty.clone(), *size));
+            }
+            _ => (),
+        }
     }
 }
 

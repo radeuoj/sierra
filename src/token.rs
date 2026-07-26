@@ -11,6 +11,7 @@ pub enum Token {
     Minus,
     Asterisk,
     Slash,
+    Percent,
     Bang,
     Equal,
     NotEqual,
@@ -27,6 +28,8 @@ pub enum Token {
 
     LParen,
     RParen,
+    LBracket,
+    RBracket,
     LBrace,
     RBrace,
 
@@ -88,6 +91,7 @@ impl std::fmt::Display for Token {
             Minus => "-",
             Asterisk => "*",
             Slash => "/",
+            Percent => "%",
             Bang => "!",
             Equal => "==",
             NotEqual => "!=",
@@ -104,6 +108,8 @@ impl std::fmt::Display for Token {
 
             LParen => "(",
             RParen => ")",
+            LBracket => "[",
+            RBracket => "]",
             LBrace => "{",
             RBrace => "}",
 

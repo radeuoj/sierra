@@ -29,9 +29,9 @@ impl BindingPower {
             Token::Equal | Token::NotEqual | Token::Lt | Token::Gt
             | Token::Lte | Token::Gte => Equals,
             Token::Plus | Token::Minus => Sum,
-            Token::Asterisk | Token::Slash => Product,
+            Token::Asterisk | Token::Slash | Token::Percent => Product,
             Token::Assign => Assign,
-            Token::LParen => Call,
+            Token::LParen | Token::LBracket => Call,
             _ => Lowest,
         }
     }
@@ -84,6 +84,7 @@ impl Parser {
             Token::Ident(name) => self.parse_ident(name),
             Token::Int(lit) => self.parse_int(lit),
             Token::String(lit) => self.parse_string(lit),
+            Token::LParen => self.parse_parens()?,
             op @ (Token::Minus | Token::Bang | Token::Ampersand
                 | Token::Asterisk)
                 => self.parse_unary_expression(op)?,
@@ -94,9 +95,10 @@ impl Parser {
             left = match self.peek_token {
                 Token::Equal | Token::NotEqual | Token::Lt | Token::Lte
                 | Token::Gt | Token::Gte | Token::Plus | Token::Minus
-                | Token::Asterisk | Token::Slash
+                | Token::Asterisk | Token::Slash | Token::Percent
                 | Token::Assign => self.parse_binary_expression(left)?,
                 Token::LParen => self.parse_call_expression(left)?,
+                Token::LBracket => self.parse_at_expression(left)?,
                 _ => return Ok(left),
             }
         }
@@ -116,6 +118,13 @@ impl Parser {
         Expression::String { value: lit }
     }
 
+    fn parse_parens(&mut self) -> Result<Expression> {
+        let expr = self.parse_expression(BindingPower::Lowest)?;
+        self.expect_peek(&Token::RParen)?;
+
+        Ok(expr)
+    }
+
     fn parse_unary_expression(&mut self, op: Token) -> Result<Expression> {
         let right = self.parse_expression(BindingPower::Unary)?;
         Ok(Expression::Unary { op, right: right.into() })
@@ -132,6 +141,14 @@ impl Parser {
     fn parse_call_expression(&mut self, left: Expression) -> Result<Expression> {
         let args = self.parse_call_arguments()?;
         Ok(Expression::Call { func: left.into(), args })
+    }
+
+    fn parse_at_expression(&mut self, left: Expression) -> Result<Expression> {
+        self.expect_peek(&Token::LBracket)?;
+        let right = self.parse_expression(BindingPower::Call)?;
+        self.expect_peek(&Token::RBracket)?;
+
+        Ok(Expression::At { left: left.into(), right: right.into(), })
     }
 
     fn parse_call_arguments(&mut self) -> Result<Vec<Expression>> {
@@ -277,21 +294,17 @@ impl Parser {
 
     fn parse_type(&mut self) -> Result<Type> {
         match &self.peek_token {
-            Token::Asterisk => {
-                self.next_token()?; // *
-                Ok(Type::Ptr(Box::new(self.parse_type()?)))
-            }
-            token => match self.expect_primitive() {
-                Ok(ty) => {
-                    self.next_token()?;
-                    Ok(ty)
-                }
-                Err(_) => bail!("expected a type but got {}", token),
+            _ if let Ok(ty) = self.expect_primitive_type() => {
+                self.next_token()?;
+                Ok(ty)
             },
+            Token::Asterisk => self.parse_pointer_type(),
+            Token::LBracket => self.parse_array_type(),
+            token => bail!("expected a type but got {}", token),
         }
     }
 
-    fn expect_primitive(&self) -> Result<Type> {
+    fn expect_primitive_type(&self) -> Result<Type> {
         use Primitive::*;
 
         Ok(match &self.peek_token {
@@ -305,6 +318,28 @@ impl Parser {
             Token::U64 => Type::Primitive(U64),
             token => bail!("expected a primitive but got {}", token),
         })
+    }
+
+    fn parse_pointer_type(&mut self) -> Result<Type> {
+        self.next_token()?; // *
+        Ok(Type::Ptr(Box::new(self.parse_type()?)))
+    }
+
+    fn parse_array_type(&mut self) -> Result<Type> {
+        self.expect_peek(&Token::LBracket)?;
+
+        let size = self.parse_expression(BindingPower::Lowest)?;
+        let size = if let Expression::Int { value } = size {
+            value.parse::<u64>()?
+        } else {
+            bail!("array size must be a non negative int");
+        };
+
+        self.expect_peek(&Token::RBracket)?;
+
+        let ty = self.parse_type()?;
+
+        Ok(Type::Array(Box::new(ty), size))
     }
 }
 

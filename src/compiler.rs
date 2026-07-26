@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::collections::HashSet;
 
 use crate::ast::*;
 use crate::analysis::*;
@@ -32,10 +33,37 @@ typedef double f64;
 {}
 
 {}
+
+{}
+
+{}
             "#,
+            self.compile_array_decls(&self.analysis.arrays),
+            self.compile_array_defs(&self.analysis.arrays),
             self.compile_func_decls(&self.analysis.func_decls),
             self.compile_func_defs(&self.file.body),
         )
+    }
+
+    fn compile_array_decls(&self, decls: &HashSet<(Type, u64)>) -> String {
+        decls.iter()
+            .map(|(ty, size)| format!("struct __Array_{};",
+                hash_array(ty, *size)))
+            .reduce(|acc, decl| format!("{acc}\n{decl}"))
+            .unwrap_or_default()
+    }
+
+    fn compile_array_defs(&self, defs: &HashSet<(Type, u64)>) -> String {
+        defs.iter()
+            .map(|(ty, size)| format!("\
+struct __Array_{} {{
+    {} inner[{}];
+}};",
+                hash_array(ty, *size),
+                self.compile_type(ty),
+                size))
+            .reduce(|acc, def| format!("{acc}\n{def}"))
+            .unwrap_or_default()
     }
 
     fn compile_func_decls(&self, decls: &HashMap<String, FuncType>) -> String {
@@ -129,6 +157,10 @@ typedef double f64;
                     .map(|arg| self.compile_expression(arg))
                     .reduce(|acc, s| format!("{acc}, {s}"))
                     .unwrap_or_default()),
+            At { left, right } => format!("({}).inner[{}]",
+                self.compile_expression(left),
+                self.compile_expression(right),
+            ),
         }
     }
 
@@ -161,7 +193,8 @@ typedef double f64;
                 Primitive::F64 => "f64".into(),
             }
             Type::Func(_) => todo!("this is a bit more difficult :("),
-            Type::Ptr(ty) => format!("{ty}*"),
+            Type::Ptr(ty) => format!("{}*", self.compile_type(ty)),
+            Type::Array(ty, size) => format!("struct __Array_{}", hash_array(ty, *size)),
         }
     }
 }
