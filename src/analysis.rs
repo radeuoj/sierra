@@ -213,12 +213,14 @@ impl Analysis {
     fn check_unary(&mut self, file: &File, expr: &Expression, op: &Token, right: &Expression, scope: &Scope) -> Result<()> {
         self.check_expr(file, right, scope)?;
 
-        let ty = match self.get_type_of_expr(right) {
-            ty @ Type::Primitive(_) => ty,
-            ty => bail!("type {} is incompatible with unary operator {}", ty, op),
+        let ty = match (op, self.get_type_of_expr(right)) {
+            (Token::Ampersand, ty) => Type::Ptr(Box::new(ty.clone())),
+            (Token::Asterisk, Type::Ptr(ty)) => *ty.clone(),
+            (_, ty @ Type::Primitive(_)) => ty.clone(),
+            (op, ty) => bail!("type {} is incompatible with unary operator {}", ty, op),
         };
 
-        self.expr_types.insert(expr.get_hash(), ty.clone());
+        self.expr_types.insert(expr.get_hash(), ty);
 
         Ok(())
     }

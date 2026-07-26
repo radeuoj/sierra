@@ -83,6 +83,7 @@ pub enum Type {
     Void,
     Primitive(Primitive),
     Func(Box<FuncType>),
+    Ptr(Box<Type>)
 }
 
 impl Display for Type {
@@ -91,6 +92,7 @@ impl Display for Type {
             Type::Void => write!(f, "<void>"),
             Type::Primitive(ty) => write!(f, "{ty}"),
             Type::Func(ty) => write!(f, "{ty}"),
+            Type::Ptr(ty) => write!(f, "*{ty}"),
         }
     }
 }

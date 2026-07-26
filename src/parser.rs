@@ -84,7 +84,9 @@ impl Parser {
             Token::Ident(name) => self.parse_ident(name),
             Token::Int(lit) => self.parse_int(lit),
             Token::String(lit) => self.parse_string(lit),
-            op @ (Token::Minus | Token::Bang) => self.parse_unary_expression(op)?,
+            op @ (Token::Minus | Token::Bang | Token::Ampersand
+                | Token::Asterisk)
+                => self.parse_unary_expression(op)?,
             token => bail!("invalid prefix operator {}", token),
         };
 
@@ -275,6 +277,10 @@ impl Parser {
 
     fn parse_type(&mut self) -> Result<Type> {
         match &self.peek_token {
+            Token::Asterisk => {
+                self.next_token()?; // *
+                Ok(Type::Ptr(Box::new(self.parse_type()?)))
+            }
             token => match self.expect_primitive() {
                 Ok(ty) => {
                     self.next_token()?;

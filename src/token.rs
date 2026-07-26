@@ -1,6 +1,5 @@
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum Token {
-    Illegal,
     Eof,
 
     Ident(String),
@@ -19,6 +18,7 @@ pub enum Token {
     Gt,
     Lte,
     Gte,
+    Ampersand,
 
     Comma,
     Colon,
@@ -77,7 +77,6 @@ impl std::fmt::Display for Token {
         use Token::*;
 
         let res = match self {
-            Illegal => "<illegal>",
             Eof => "<eof>",
 
             Ident(name) => name,
@@ -96,6 +95,7 @@ impl std::fmt::Display for Token {
             Gt => ">",
             Lte => "<=",
             Gte => ">=",
+            Ampersand => "&",
 
             Comma => ",",
             Colon => ":",

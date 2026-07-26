@@ -147,20 +147,21 @@ typedef double f64;
 
     fn compile_type(&self, ty: &Type) -> String {
         match ty {
-            Type::Void => "void",
+            Type::Void => "void".into(),
             Type::Primitive(ty) => match ty {
-                Primitive::I8 => "i8",
-                Primitive::U8 => "u8",
-                Primitive::I16 => "i16",
-                Primitive::U16 => "u16",
-                Primitive::I32 => "i32",
-                Primitive::U32 => "u32",
-                Primitive::I64 => "i64",
-                Primitive::U64 => "u64",
-                Primitive::F32 => "f32",
-                Primitive::F64 => "f64",
+                Primitive::I8 => "i8".into(),
+                Primitive::U8 => "u8".into(),
+                Primitive::I16 => "i16".into(),
+                Primitive::U16 => "u16".into(),
+                Primitive::I32 => "i32".into(),
+                Primitive::U32 => "u32".into(),
+                Primitive::I64 => "i64".into(),
+                Primitive::U64 => "u64".into(),
+                Primitive::F32 => "f32".into(),
+                Primitive::F64 => "f64".into(),
             }
             Type::Func(_) => todo!("this is a bit more difficult :("),
-        }.into()
+            Type::Ptr(ty) => format!("{ty}*"),
+        }
     }
 }

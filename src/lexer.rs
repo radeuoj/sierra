@@ -1,5 +1,5 @@
 use std::io::Write;
-use anyhow::bail;
+use anyhow::{Result, bail};
 
 use crate::token::*;
 
@@ -30,7 +30,7 @@ impl Lexer {
         self.pos -= 1;
     }
 
-    pub fn next_token(&mut self) -> anyhow::Result<Token> {
+    pub fn next_token(&mut self) -> Result<Token> {
         self.skip_whitespace();
         use Token::*;
 
@@ -74,6 +74,7 @@ impl Lexer {
             } else {
                 Bang
             }
+            '&' => Ampersand,
             ',' => Comma,
             ':' => Colon,
             ';' => Semicolon,
@@ -91,7 +92,7 @@ impl Lexer {
                 let ident = self.read_ident()?;
                 Token::from_symbol(ident)
             } else {
-                Illegal
+                bail!("illegal token {}", ch);
             }
         })
     }
@@ -112,7 +113,7 @@ impl Lexer {
         ch.is_ascii_alphabetic() || ch.is_ascii_digit() || ch == '_'
     }
 
-    fn read_ident(&mut self) -> anyhow::Result<&str> {
+    fn read_ident(&mut self) -> Result<&str> {
         let start = self.pos;
 
         while Self::is_ident_char(self.peek_char()) {
@@ -132,7 +133,7 @@ impl Lexer {
         str::from_utf8(&self.input[start..self.pos]).unwrap()
     }
 
-    fn read_string(&mut self) -> anyhow::Result<&str> {
+    fn read_string(&mut self) -> Result<&str> {
         let start = self.pos;
 
         while !['"', '\0'].contains(&self.peek_char()) {
