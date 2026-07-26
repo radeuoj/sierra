@@ -73,9 +73,11 @@ typedef double f64;
                 Let { name, ty, value } => {
                     match value {
                         Some(value) => format!("{} {} = {};",
-                            self.compile_type(ty), name, self.compile_expression(value)),
+                            self.compile_type(self.analysis.get_type_of_expr(value)),
+                            name,
+                            self.compile_expression(value)),
                         None => format!("{} {};",
-                            self.compile_type(ty), name),
+                            self.compile_type(ty.as_ref().unwrap()), name),
                     }
                 }
                 Return { value } => format!("return {};",

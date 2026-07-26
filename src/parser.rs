@@ -166,8 +166,13 @@ impl Parser {
         self.next_token()?; // let
         let name = self.expect_ident()?;
 
-        self.expect_peek(&Token::Colon)?;
-        let ty = self.parse_type()?;
+        let ty = match self.peek_token {
+            Token::Colon => {
+                self.next_token()?; // :
+                Some(self.parse_type()?)
+            }
+            _ => None,
+        };
 
         let value = match self.peek_token {
             Token::Assign => {

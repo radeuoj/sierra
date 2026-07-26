@@ -51,7 +51,7 @@ pub struct FuncParam {
 pub enum Statement {
     Let {
         name: String,
-        ty: Type,
+        ty: Option<Type>,
         value: Option<Expression>,
     },
     Return {

@@ -73,7 +73,7 @@ impl Analysis {
     /**
      * panics if expression has not been checked
      */
-    fn get_type_of_expr(&self, expr: &Expression) -> &Type {
+    pub fn get_type_of_expr(&self, expr: &Expression) -> &Type {
         self.expr_types.get(&expr.get_hash()).unwrap()
     }
 
@@ -305,7 +305,7 @@ impl Analysis {
         }
     }
 
-    fn check_let(&mut self, file: &File, name: &str, ty: &Type, value: Option<&Expression>, scope: &mut Scope) -> Result<()> {
+    fn check_let(&mut self, file: &File, name: &str, ty: &Option<Type>, value: Option<&Expression>, scope: &mut Scope) -> Result<()> {
         // if !self.does_type_exist(ty) {
         //     bail!("{} does not exist", ty);
         // }
@@ -314,16 +314,21 @@ impl Analysis {
             self.check_expr(file, value, scope)?;
             let value_type = self.expr_types.get(&value.get_hash()).unwrap();
 
-            if value_type != ty {
+            if let Some(ty) = ty && value_type != ty {
                 bail!("expected expr of type {} but got {}", ty, value_type);
             }
+        } else if ty.is_none() {
+            bail!("let statement neither has a type nor an assigned value");
         }
 
         if self.does_name_exist(name, Some(scope)) {
             bail!("{} already exists", name);
         }
 
-        scope.add(name, ty.clone());
+        scope.add(name, match ty {
+            Some(ty) => ty.clone(),
+            None => self.get_type_of_expr(value.unwrap()).clone(),
+        });
 
         Ok(())
     }
