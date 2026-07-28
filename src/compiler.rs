@@ -54,6 +54,17 @@ typedef double f64;
     }
 
     fn compile_array_defs(&self, defs: &HashSet<(Type, u64)>) -> String {
+        fn get_degree_of_array_type(ty: &Type) -> usize {
+            if let Type::Array(ty, _) = ty {
+                get_degree_of_array_type(ty) + 1
+            } else {
+                0
+            }
+        }
+
+        let mut defs = defs.iter().collect::<Vec<_>>();
+        defs.sort_by_key(|(ty, _)| get_degree_of_array_type(ty));
+
         defs.iter()
             .map(|(ty, size)| format!("\
 struct __Array_{} {{
