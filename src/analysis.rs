@@ -9,7 +9,7 @@ pub struct Analysis {
     pub expr_types: HashMap<ExprHash, Type>,
     pub func_decls: HashMap<String, FuncType>,
     pub func_defs: HashSet<String>, // whether this function has a definition already
-    pub arrays: HashSet<(Type, u64)>,
+    pub types_used: HashSet<Type>,
 }
 
 struct Scope<'a> {
@@ -27,7 +27,7 @@ impl Analysis {
             expr_types: HashMap::new(),
             func_decls: HashMap::new(),
             func_defs: HashSet::new(),
-            arrays: HashSet::new(),
+            types_used: HashSet::new(),
         };
 
         analysis.check_top_level(file)?;
@@ -389,17 +389,16 @@ impl Analysis {
     }
 
     fn check_type(&mut self, ty: &Type) {
+        self.types_used.insert(ty.clone());
+
         match ty {
             Type::Func(ty) => {
                 self.check_type(&ty.return_type);
                 for param in &ty.params { self.check_type(param); }
             }
             Type::Ptr(ty) => self.check_type(ty),
-            Type::Array(ty, size) => {
-                self.check_type(ty);
-                self.arrays.insert((*ty.clone(), *size));
-            }
-            _ => (),
+            Type::Array(ty, _) => self.check_type(ty),
+            Type::Void | Type::Primitive(_) => (),
         }
     }
 }

@@ -1,5 +1,4 @@
 use std::collections::HashMap;
-use std::collections::HashSet;
 
 use crate::ast::*;
 use crate::analysis::*;
@@ -16,6 +15,8 @@ impl Compiler {
     }
 
     pub fn compile(&self) -> String {
+        let ordered_types = self.get_ordered_types();
+
         format!(r#"// compiled from Sierra
 #include <stdint.h>
 
@@ -38,34 +39,83 @@ typedef double f64;
 
 {}
             "#,
-            self.compile_array_decls(&self.analysis.arrays),
-            self.compile_array_defs(&self.analysis.arrays),
+            self.compile_type_decls(&ordered_types),
+            self.compile_type_defs(&ordered_types),
             self.compile_func_decls(&self.analysis.func_decls),
             self.compile_func_defs(&self.file.body),
         )
     }
 
-    fn compile_array_decls(&self, decls: &HashSet<(Type, u64)>) -> String {
+    fn get_ordered_types(&self) -> Vec<Type> {
+        let mut aux: HashMap<Type, (Vec<Type>, u64)> = HashMap::new();
+        // this maps every type to a list of types that have it as a dep
+        // and the number of deps it has left
+
+        for ty in &self.analysis.types_used {
+            aux.insert(ty.clone(), (vec![], 0));
+        }
+
+        for ty in &self.analysis.types_used {
+            match ty {
+                Type::Func(inner) => {
+                    aux.get_mut(&ty).unwrap().1 += 1 + inner.params.len() as u64;
+
+                    aux.get_mut(&inner.return_type).unwrap().0.push(ty.clone());
+                    for param in &inner.params {
+                        aux.get_mut(param).unwrap().0.push(ty.clone());
+                    }
+                }
+                Type::Ptr(inner) => {
+                    aux.get_mut(&ty).unwrap().1 += 1;
+                    aux.get_mut(inner).unwrap().0.push(ty.clone());
+                }
+                Type::Array(inner, _) => {
+                    aux.get_mut(&ty).unwrap().1 += 1;
+                    aux.get_mut(inner).unwrap().0.push(ty.clone());
+                }
+                Type::Void | Type::Primitive(_) => (),
+            }
+        }
+
+        let mut q = vec![];
+        for (ty, (_, deps)) in &aux {
+            if *deps == 0 {
+                q.push(ty.clone());
+            }
+        }
+
+        let mut res = vec![];
+        while !q.is_empty() {
+            let ty = q.pop().unwrap();
+
+            let children = aux.get(&ty).unwrap().0.clone();
+            for child in children {
+                let (_, deps) = aux.get_mut(&child).unwrap();
+                *deps -= 1;
+
+                if *deps == 0 {
+                    q.push(child);
+                }
+            }
+
+            res.push(ty);
+        }
+
+        res
+    }
+
+    fn compile_type_decls(&self, decls: &[Type]) -> String {
         decls.iter()
+            .filter_map(|ty| if let Type::Array(ty, size) = ty { Some((ty, size)) } else { None })
             .map(|(ty, size)| format!("struct __Array_{};",
                 hash_array(ty, *size)))
             .reduce(|acc, decl| format!("{acc}\n{decl}"))
             .unwrap_or_default()
     }
 
-    fn compile_array_defs(&self, defs: &HashSet<(Type, u64)>) -> String {
-        fn get_degree_of_array_type(ty: &Type) -> usize {
-            if let Type::Array(ty, _) = ty {
-                get_degree_of_array_type(ty) + 1
-            } else {
-                0
-            }
-        }
-
-        let mut defs = defs.iter().collect::<Vec<_>>();
-        defs.sort_by_key(|(ty, _)| get_degree_of_array_type(ty));
-
+    fn compile_type_defs(&self, defs: &[Type]) -> String {
         defs.iter()
+            .filter_map(|ty| if let Type::Array(ty, size) = ty { Some((ty, size)) } else { None })
             .map(|(ty, size)| format!("\
 struct __Array_{} {{
     {} inner[{}];
