@@ -201,12 +201,16 @@ impl Parser {
             _ => None,
         };
 
+        self.expect_peek(&Token::Semicolon)?;
+
         Ok(Statement::Let { name, ty, value })
     }
 
     fn parse_return_statement(&mut self) -> Result<Statement> {
         self.next_token()?; // return
         let value = self.parse_expression(BindingPower::Lowest)?;
+        self.expect_peek(&Token::Semicolon)?;
+
         Ok(Statement::Return { value })
     }
 
@@ -252,6 +256,7 @@ impl Parser {
         let body = if self.peek_token == Token::LBrace {
             Some(self.parse_block_statement()?)
         } else {
+            self.expect_peek(&Token::Semicolon)?;
             None
         };
 
@@ -289,6 +294,8 @@ impl Parser {
 
     fn parse_expr_statement(&mut self) -> Result<Statement> {
         let value = self.parse_expression(BindingPower::Lowest)?;
+        self.expect_peek(&Token::Semicolon)?;
+
         Ok(Statement::Expr { value })
     }
 

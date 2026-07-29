@@ -219,7 +219,11 @@ impl Analysis {
         self.check_expr(right, scope)?;
 
         let ty = match (op, self.get_type_of_expr(right)) {
-            (Token::Ampersand, ty) => Type::Ptr(Box::new(ty.clone())),
+            (Token::Ampersand, ty) => match right {
+                Expression::Ident { .. } | Expression::Unary { op: Token::Asterisk, .. }
+                | Expression::At { .. } => Type::Ptr(Box::new(ty.clone())),
+                _ => bail!("right side of & unary operator must be an lvalue"),
+            }
             (Token::Asterisk, Type::Ptr(ty)) => *ty.clone(),
             (op, ty @ Type::Primitive(_)) if *op != Token::Asterisk => ty.clone(),
             (op, ty) => bail!("type {} is incompatible with unary operator {}", ty, op),
@@ -241,7 +245,7 @@ impl Analysis {
             (Token::Assign, left_ty, right_ty) if left_ty == right_ty => match left {
                 Expression::Ident { .. } | Expression::Unary { op: Token::Asterisk, .. }
                 | Expression::At { .. } => right_ty.clone(),
-                _ => bail!("left side of assign expression must be an l-value"),
+                _ => bail!("left side of = operator must be an lvalue"),
             }
             (op, left_ty, right_ty) => bail!("types {} and {} are incompatible with binary operator {}", left_ty, right_ty, op),
         };
