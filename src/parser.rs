@@ -306,7 +306,7 @@ impl Parser {
                 Ok(ty)
             },
             Token::Asterisk => self.parse_pointer_type(),
-            Token::LBracket => self.parse_array_type(),
+            Token::LBracket => self.parse_array_slice_type(),
             token => bail!("expected a type but got {}", token),
         }
     }
@@ -332,21 +332,28 @@ impl Parser {
         Ok(Type::Ptr(Box::new(self.parse_type()?)))
     }
 
-    fn parse_array_type(&mut self) -> Result<Type> {
+    fn parse_array_slice_type(&mut self) -> Result<Type> {
         self.expect_peek(&Token::LBracket)?;
 
-        let size = self.parse_expression(BindingPower::Lowest)?;
-        let size = if let Expression::Int { value } = size {
-            value.parse::<u64>()?
+        let size = if self.peek_token == Token::RBracket {
+            None
         } else {
-            bail!("array size must be a non negative int");
+            let size = self.parse_expression(BindingPower::Lowest)?;
+            if let Expression::Int { value } = size {
+                Some(value.parse::<u64>()?)
+            } else {
+                bail!("array size must be a non negative int");
+            }
         };
 
         self.expect_peek(&Token::RBracket)?;
 
         let ty = self.parse_type()?;
 
-        Ok(Type::Array(Box::new(ty), size))
+        Ok(match size {
+            Some(size) => Type::Array(Box::new(ty), size),
+            None => Type::Slice(Box::new(ty)),
+        })
     }
 }
 

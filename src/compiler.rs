@@ -65,14 +65,12 @@ typedef double f64;
                         aux.get_mut(param).unwrap().0.push(ty.clone());
                     }
                 }
-                Type::Ptr(inner) => {
-                    aux.get_mut(&ty).unwrap().1 += 1;
-                    aux.get_mut(inner).unwrap().0.push(ty.clone());
-                }
+                Type::Ptr(_) => (),
                 Type::Array(inner, _) => {
                     aux.get_mut(&ty).unwrap().1 += 1;
                     aux.get_mut(inner).unwrap().0.push(ty.clone());
                 }
+                Type::Slice(_) => (),
                 Type::Void | Type::Primitive(_) => (),
             }
         }
@@ -106,24 +104,35 @@ typedef double f64;
 
     fn compile_type_decls(&self, decls: &[Type]) -> String {
         decls.iter()
-            .filter_map(|ty| if let Type::Array(ty, size) = ty { Some((ty, size)) } else { None })
-            .map(|(ty, size)| format!("struct __Array_{};",
-                hash_array(ty, *size)))
+            .filter_map(|ty| match ty {
+                Type::Array(..) => Some(format!("struct __Array_{};", ty.get_hash())),
+                Type::Slice(..) => Some(format!("struct __Slice_{};", ty.get_hash())),
+                _ => None,
+            })
             .reduce(|acc, decl| format!("{acc}\n{decl}"))
             .unwrap_or_default()
     }
 
     fn compile_type_defs(&self, defs: &[Type]) -> String {
         defs.iter()
-            .filter_map(|ty| if let Type::Array(ty, size) = ty { Some((ty, size)) } else { None })
-            .map(|(ty, size)| format!("\
+            .filter_map(|ty| match ty {
+                Type::Array(inner, size) => Some(format!("\
 struct __Array_{} {{
     {} inner[{}];
 }};",
-                hash_array(ty, *size),
-                self.compile_type(ty),
-                size))
-            .reduce(|acc, def| format!("{acc}\n{def}"))
+                    ty.get_hash(),
+                    self.compile_type(inner),
+                    size)),
+                Type::Slice(inner) => Some(format!("\
+struct __Slice_{} {{
+    {}* inner;
+    u64 len;
+}};",
+                    ty.get_hash(),
+                    self.compile_type(inner))),
+                _ => None,
+            })
+            .reduce(|acc, decl| format!("{acc}\n{decl}"))
             .unwrap_or_default()
     }
 
@@ -255,7 +264,8 @@ struct __Array_{} {{
             }
             Type::Func(_) => todo!("this is a bit more difficult :("),
             Type::Ptr(ty) => format!("{}*", self.compile_type(ty)),
-            Type::Array(ty, size) => format!("struct __Array_{}", hash_array(ty, *size)),
+            ty @ Type::Array(_, _) => format!("struct __Array_{}", ty.get_hash()),
+            ty @ Type::Slice(_) => format!("struct __Slice_{}", ty.get_hash()),
         }
     }
 }

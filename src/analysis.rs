@@ -406,6 +406,7 @@ impl Analysis {
             }
             Type::Ptr(ty) => self.check_type(ty),
             Type::Array(ty, _) => self.check_type(ty),
+            Type::Slice(ty) => self.check_type(ty),
             Type::Void | Type::Primitive(_) => (),
         }
     }

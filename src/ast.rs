@@ -89,6 +89,7 @@ pub enum Type {
     Func(Box<FuncType>),
     Ptr(Box<Type>),
     Array(Box<Type>, u64),
+    Slice(Box<Type>),
 }
 
 impl Display for Type {
@@ -99,7 +100,16 @@ impl Display for Type {
             Type::Func(ty) => write!(f, "{ty}"),
             Type::Ptr(ty) => write!(f, "*{ty}"),
             Type::Array(ty, size) => write!(f, "[{size}]{ty}"),
+            Type::Slice(ty) => write!(f, "[]{ty}"),
         }
+    }
+}
+
+impl Type {
+    pub fn get_hash(&self) -> u64 {
+        let mut hasher = DefaultHasher::new();
+        self.hash(&mut hasher);
+        hasher.finish()
     }
 }
 
@@ -150,11 +160,4 @@ impl Display for Primitive {
             Primitive::F64 => "f64",
         })
     }
-}
-
-pub fn hash_array(ty: &Type, size: u64) -> u64 {
-    let mut hasher = DefaultHasher::new();
-    ty.hash(&mut hasher);
-    size.hash(&mut hasher);
-    hasher.finish()
 }
