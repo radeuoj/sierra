@@ -256,6 +256,14 @@ impl Analysis {
         Ok(())
     }
 
+    fn try_coercion(&self, expected: &Type, got: &Type) -> Result<Type> {
+        match (expected, got) {
+            (expected, got) if expected == got => Ok(expected.clone()),
+            (Type::Primitive(expected), Type::Primitive(_)) => Ok(Type::Primitive(expected.clone())),
+            (expected, got) => bail!("expected type {} but got {}", expected, got),
+        }
+    }
+
     fn check_call(&mut self, expr: &Expression, func: &Expression, args: &[Expression], scope: &Scope) -> Result<()> {
         self.check_expr(func, scope)?;
 
@@ -270,13 +278,13 @@ impl Analysis {
         }
 
         let mut errs = vec![];
-        for (i, (arg, ty)) in args.iter().zip(ty.params.iter()).enumerate() {
+        for (arg, ty) in args.iter().zip(ty.params.iter()) {
             if let Err(err) = self.check_expr(arg, scope) {
                 errs.push(err);
             }
 
-            if self.expr_types.get(&arg.get_hash()) != Some(ty) {
-                errs.push(anyhow!("arg {} of func does not match type of param", i));
+            if let Err(err) = self.try_coercion(ty, self.expr_types.get(&arg.get_hash()).unwrap()) {
+                errs.push(err);
             }
         }
 
@@ -340,8 +348,8 @@ impl Analysis {
             self.check_expr(value, scope)?;
             let value_type = self.expr_types.get(&value.get_hash()).unwrap();
 
-            if let Some(ty) = ty && value_type != ty {
-                bail!("expected expr of type {} but got {}", ty, value_type);
+            if let Some(ty) = ty {
+                self.try_coercion(ty, value_type)?;
             }
         } else if ty.is_none() {
             bail!("let statement neither has a type nor an assigned value");
@@ -353,6 +361,8 @@ impl Analysis {
 
         if let Some(ty) = ty {
             self.check_type(ty);
+        } else {
+            self.check_type(&self.get_type_of_expr(value.unwrap()).clone());
         }
 
         scope.add(name, match ty {
@@ -367,9 +377,7 @@ impl Analysis {
         self.check_expr(value, scope)?;
         let value_type = self.expr_types.get(&value.get_hash()).unwrap();
 
-        if *value_type != scope.return_type {
-            bail!("return expected type {} but instead found type {}", scope.return_type, value_type);
-        }
+        self.try_coercion(&scope.return_type, value_type)?;
 
         Ok(())
     }
