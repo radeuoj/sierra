@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use crate::analysis::{Analysis, Builtin, Type};
+use crate::analysis::{Analysis, Builtin, Primitive, Type};
 use crate::ast::{self, BlockStmt, Expression, File, FuncParam, Statement};
 
 #[allow(unused)]
@@ -232,7 +232,11 @@ struct __Slice_{} {{
         match expr {
             Ident { value, .. } => value.into(),
             Int { value } => value.into(),
-            String { value } => format!("\"{value}\""),
+            String { value } => format!("({})\"{value}\"",
+                self.compile_analysis_type(&Type::Ptr(Box::new(
+                    Type::Array(Box::new(Type::Primitive(Primitive::U8)), value.len() as u64)
+                )))
+            ),
             Unary { op, right } => format!("{op}{}",
                 self.compile_expression(right)),
             Binary { op, left, right } => format!("{} {op} {}",

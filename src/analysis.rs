@@ -177,7 +177,7 @@ impl Analysis {
         match expr {
             Expression::Ident { value, .. } => self.check_ident(expr, value, scope),
             Expression::Int { .. } => self.check_int(expr),
-            Expression::String { .. } => todo!("we don't support strings atm"),
+            Expression::String { value } => self.check_string(expr, value),
             Expression::Unary { op, right } => self.check_unary(expr, op, right, scope),
             Expression::Binary { op, left, right } => self.check_binary(expr, op, left, right, scope),
             Expression::Call { func, args } => self.check_call(expr, func, args, scope),
@@ -197,6 +197,14 @@ impl Analysis {
 
     fn check_int(&mut self, expr: &Expression) -> Result<()> {
         self.expr_types.insert(expr.get_hash(), Type::Primitive(Primitive::I32));
+
+        Ok(())
+    }
+
+    fn check_string(&mut self, expr: &Expression, value: &str) -> Result<()> {
+        self.expr_types.insert(expr.get_hash(), Type::Ptr(Box::new(
+            Type::Array(Box::new(Type::Primitive(Primitive::U8)), value.len() as u64)
+        )));
 
         Ok(())
     }

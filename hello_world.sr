@@ -1,0 +1,13 @@
+fn putchar(ch: i32) -> i32;
+
+fn print(str: []u8) {
+    let i = 0;
+    while i < len(str) {
+        putchar(str[i]);
+        i = i + 1;
+    }
+}
+
+fn main() {
+    print("hello world\n");
+}
