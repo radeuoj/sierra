@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
-use crate::ast::*;
-use crate::analysis::*;
+use crate::analysis::{Analysis, FuncType, Primitive, Type};
+use crate::ast::{BlockStmt, Expression, File, FuncParam, Statement};
 
 #[allow(unused)]
 pub struct Compiler {
@@ -175,7 +175,8 @@ struct __Slice_{} {{
                             name,
                             self.compile_expression(value)),
                         None => format!("{} {};",
-                            self.compile_type(ty.as_ref().unwrap()), name),
+                            self.compile_type(self.analysis.type_map.get(ty.as_ref().unwrap()).unwrap()),
+                            name),
                     }
                 }
                 Return { value } => format!("return {};",
@@ -187,8 +188,8 @@ struct __Slice_{} {{
                 ),
                 Expr { value } => format!("{};",
                     self.compile_expression(value)),
-                Func { name, return_type, params, body: Some(body) } => format!("{} {}",
-                    self.compile_func_decl(name, return_type, params),
+                Func { name, params, body: Some(body), .. } => format!("{} {}",
+                    self.compile_func_decl(name, self.analysis.func_decls.get(name).unwrap(), params),
                     self.compile_block_statement(body, indent),
                 ),
                 Func { body: None, .. } => "".into(), // skip
@@ -234,17 +235,18 @@ struct __Slice_{} {{
         }
     }
 
-    fn compile_func_decl(&self, name: &str, return_type: &Type, params: &[FuncParam]) -> String {
+    fn compile_func_decl(&self, name: &str, func_type: &FuncType, params: &[FuncParam]) -> String {
         format!("{} {}({})",
-            self.compile_type(return_type), name,
+            self.compile_type(&func_type.return_type), name,
             params.iter()
-                .map(|param| self.compile_param(param))
+                .zip(func_type.params.iter())
+                .map(|(param, ty)| self.compile_param(&param.name, ty))
                 .reduce(|acc, s| format!("{acc}, {s}"))
                 .unwrap_or_default())
     }
 
-    fn compile_param(&self, param: &FuncParam) -> String {
-        format!("{} {}", self.compile_type(&param.ty), param.name)
+    fn compile_param(&self, name: &str, ty: &Type) -> String {
+        format!("{} {}", self.compile_type(ty), name)
     }
 
     fn compile_type(&self, ty: &Type) -> String {

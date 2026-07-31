@@ -1,21 +1,18 @@
-use std::collections::{HashMap, HashSet};
+use std::{collections::{HashMap, HashSet}, fmt::Display, hash::{DefaultHasher, Hash, Hasher}};
 
-use anyhow::{Result, anyhow, bail};
+use anyhow::{Context, Result, bail};
 
-use crate::{ast::*, token::Token};
+use crate::ast::{self, BlockStmt, ExprHash, Expression, File, FuncParam, Statement};
+use crate::token::Token;
 
 #[derive(Debug)]
 pub struct Analysis {
     pub expr_types: HashMap<ExprHash, Type>,
     pub func_decls: HashMap<String, FuncType>,
     pub func_defs: HashSet<String>, // whether this function has a definition already
+    pub type_map: HashMap<ast::Type, Type>,
     pub types_used: HashSet<Type>,
-}
-
-struct Scope<'a> {
-    parent: Option<&'a Scope<'a>>,
-    symbols: HashMap<String, Type>,
-    return_type: Type,
+    pub named_types: HashMap<String, Type>
 }
 
 /**
@@ -27,36 +24,30 @@ impl Analysis {
             expr_types: HashMap::new(),
             func_decls: HashMap::new(),
             func_defs: HashSet::new(),
+            type_map: HashMap::new(),
             types_used: HashSet::new(),
+            named_types: HashMap::new(),
         };
 
+        analysis.add_primitive_types();
         analysis.check_top_level(file)?;
-        let mut errs = vec![];
-
-        for stmt in &file.body {
-            match stmt {
-                Statement::Func {
-                    name,
-                    params,
-                    body,
-                    ..
-                } => if let Some(body) = body && let Err(err)
-                        = analysis.check_func_body(analysis.func_decls.get(name).unwrap().clone(), params, body)
-                {
-                    errs.push(err);
-                }
-                _ => unreachable!("already checked"),
-            }
-        }
-
-        if !errs.is_empty() {
-            bail!(errs.iter()
-                .map(|err| format!("{err}"))
-                .reduce(|acc, err| format!("{acc}\n{err}"))
-                .unwrap_or_default())
-        }
+        analysis.check_func_bodies(file)?;
+        analysis.collect_used_types();
 
         Ok(analysis)
+    }
+
+    fn add_primitive_types(&mut self) {
+        self.named_types.insert("i8".into(), Type::Primitive(Primitive::I8));
+        self.named_types.insert("u8".into(), Type::Primitive(Primitive::U8));
+        self.named_types.insert("i16".into(), Type::Primitive(Primitive::I16));
+        self.named_types.insert("u16".into(), Type::Primitive(Primitive::U16));
+        self.named_types.insert("i32".into(), Type::Primitive(Primitive::I32));
+        self.named_types.insert("u32".into(), Type::Primitive(Primitive::U32));
+        self.named_types.insert("i64".into(), Type::Primitive(Primitive::I64));
+        self.named_types.insert("u64".into(), Type::Primitive(Primitive::U64));
+        self.named_types.insert("f32".into(), Type::Primitive(Primitive::F32));
+        self.named_types.insert("f64".into(), Type::Primitive(Primitive::F64));
     }
 
     fn does_name_exist(&self, name: &str, scope: Option<&Scope>) -> bool {
@@ -79,9 +70,24 @@ impl Analysis {
         self.expr_types.get(&expr.get_hash()).unwrap()
     }
 
-    fn check_top_level(&mut self, file: &File) -> Result<()> {
-        let mut errs = vec![];
+    /**
+     * turns a type expression from the AST into a semantic type
+     */
+    fn resolve_type(&mut self, ty: &ast::Type) -> Result<Type> {
+        let resolved = match ty {
+            ast::Type::Void => Type::Void,
+            ast::Type::Named(name) => self.named_types.get(name).cloned()
+                .with_context(|| format!("{name} is not a type"))?,
+            ast::Type::Ptr(inner) => Type::Ptr(Box::new(self.resolve_type(inner)?)),
+            ast::Type::Array(inner, size) => Type::Array(Box::new(self.resolve_type(inner)?), *size),
+            ast::Type::Slice(inner) => Type::Slice(Box::new(self.resolve_type(inner)?)),
+        };
 
+        self.type_map.insert(ty.clone(), resolved.clone());
+        Ok(resolved)
+    }
+
+    fn check_top_level(&mut self, file: &File) -> Result<()> {
         for stmt in &file.body {
             match stmt {
                 Statement::Func {
@@ -89,19 +95,9 @@ impl Analysis {
                     return_type,
                     params,
                     body,
-                } => match self.check_func(name, return_type, params, body.is_some()) {
-                    Ok(()) => (),
-                    Err(err) => errs.push(err),
-                },
-                _ => errs.push(anyhow!("only functions are allowed at top level")),
+                } => self.check_func(name, return_type, params, body.is_some())?,
+                _ => bail!("only functions are allowed at top level"),
             }
-        }
-
-        if !errs.is_empty() {
-            bail!(errs.iter()
-                .map(|err| format!("{err}"))
-                .reduce(|acc, err| format!("{acc}\n{err}"))
-                .unwrap_or_default())
         }
 
         Ok(())
@@ -110,58 +106,44 @@ impl Analysis {
     fn check_func(
         &mut self,
         name: &str,
-        return_type: &Type,
+        return_type: &ast::Type,
         params: &[FuncParam],
-        body: bool,
+        is_def: bool,
     ) -> Result<()> {
-        let mut errs = vec![];
+        let return_type = self.resolve_type(return_type)?;
 
-        let func_type = FuncType {
-            return_type: return_type.clone(),
-            params: params.iter()
-                .map(|param| param.ty.clone())
-                .collect(),
-        };
-
-        self.check_type(&Type::Func(Box::new(func_type.clone())));
-
-        // TODO: wtf is this bruh
-        if self.func_decls.contains_key(name) &&
-            !(!body && *self.func_decls.get(name).unwrap() == func_type) && // this means that its a decl and the signature is the same
-            !(body && *self.func_decls.get(name).unwrap() == func_type &&
-                !self.func_defs.contains(name)) // this means that its a def that has only been decl before
-        {
-            errs.push(anyhow!("{} already exists", name));
+        let mut param_types = vec![];
+        for param in params {
+            let ty = self.resolve_type(&param.ty)?;
+            param_types.push(ty);
         }
 
-        // if !self.does_type_exist(return_type) {
-        //     errs.push(anyhow!("{} is not a type", return_type));
-        // }
+        let func_type = FuncType {
+            return_type,
+            params: param_types,
+        };
+
+        // a decl with the same signature, or a def after a decl, are allowed;
+        // everything else is a duplicate
+        match self.func_decls.get(name) {
+            None => (),
+            Some(existing) if existing == &func_type
+                && (!is_def || !self.func_defs.contains(name)) => (),
+            Some(_) => bail!("{name} already exists"),
+        }
 
         let mut param_names = HashSet::new();
-
         for param in params {
             if self.does_name_exist(&param.name, None)
                 || param_names.contains(&param.name)
             {
-                errs.push(anyhow!("{} already exists", param.name));
+                bail!("{} already exists", param.name);
             }
             param_names.insert(param.name.clone());
-
-            // if !self.does_type_exist(&param.ty) {
-            //     errs.push(anyhow!("{} is not a type", param.ty));
-            // }
-        }
-
-        if !errs.is_empty() {
-            bail!(errs.iter()
-                .map(|err| format!("{err}"))
-                .reduce(|acc, err| format!("{acc}\n{err}"))
-                .unwrap_or_default())
         }
 
         self.func_decls.insert(name.into(), func_type);
-        if body { self.func_defs.insert(name.into()); }
+        if is_def { self.func_defs.insert(name.into()); }
 
         Ok(())
     }
@@ -169,6 +151,33 @@ impl Analysis {
     /**
      * this assumes that param types and names and function return type have been already checked
      */
+    fn check_func_bodies(&mut self, file: &File) -> Result<()> {
+        let mut errs = vec![];
+
+        for stmt in &file.body {
+            let Statement::Func {
+                name,
+                params,
+                body,
+                ..
+            } = stmt else {
+                unreachable!("already checked");
+            };
+
+            let Some(body) = body else { continue };
+
+            if let Err(err) = self.check_func_body(
+                self.func_decls.get(name).unwrap().clone(),
+                params,
+                body,
+            ) {
+                errs.push(err);
+            }
+        }
+
+        join_errs(errs)
+    }
+
     fn check_func_body(&mut self, func_type: FuncType, params: &[FuncParam], body: &BlockStmt) -> Result<()> {
         let return_type = &func_type.return_type;
         let params = params.iter().map(|param| &param.name).zip(func_type.params.iter());
@@ -196,15 +205,11 @@ impl Analysis {
     }
 
     fn check_ident(&mut self, expr: &Expression, value: &str, scope: &Scope) -> Result<()> {
-        // if self.does_type_exist(value) {
-        //     bail!("{} is a type", value);
-        // }
+        let Some(ty) = self.get_type_of(value, Some(scope)) else {
+            bail!("{value} does not exist");
+        };
 
-        if let Some(ty) = self.get_type_of(value, Some(scope)) {
-            self.expr_types.insert(expr.get_hash(), ty);
-        } else {
-            bail!("{} does not exist", value);
-        }
+        self.expr_types.insert(expr.get_hash(), ty);
 
         Ok(())
     }
@@ -229,7 +234,6 @@ impl Analysis {
             (op, ty) => bail!("type {} is incompatible with unary operator {}", ty, op),
         };
 
-        self.check_type(&ty);
         self.expr_types.insert(expr.get_hash(), ty);
 
         Ok(())
@@ -250,7 +254,6 @@ impl Analysis {
             (op, left_ty, right_ty) => bail!("types {} and {} are incompatible with binary operator {}", left_ty, right_ty, op),
         };
 
-        self.check_type(&return_ty);
         self.expr_types.insert(expr.get_hash(), return_ty);
 
         Ok(())
@@ -290,14 +293,7 @@ impl Analysis {
 
         self.expr_types.insert(expr.get_hash(), ty.return_type.clone());
 
-        if !errs.is_empty() {
-            bail!(errs.iter()
-                .map(|err| format!("{err}"))
-                .reduce(|acc, err| format!("{acc}\n{err}"))
-                .unwrap_or_default())
-        }
-
-        Ok(())
+        join_errs(errs)
     }
 
     fn check_at(&mut self, expr: &Expression, left: &Expression, right: &Expression, scope: &Scope) -> Result<()> {
@@ -339,36 +335,34 @@ impl Analysis {
         }
     }
 
-    fn check_let(&mut self, name: &str, ty: &Option<Type>, value: Option<&Expression>, scope: &mut Scope) -> Result<()> {
-        // if !self.does_type_exist(ty) {
-        //     bail!("{} does not exist", ty);
-        // }
+    fn check_let(&mut self, name: &str, ty: &Option<ast::Type>, value: Option<&Expression>, scope: &mut Scope) -> Result<()> {
+        let declared_ty = match ty {
+            Some(ty) => Some(self.resolve_type(ty)?),
+            None => None,
+        };
 
-        if let Some(value) = value {
-            self.check_expr(value, scope)?;
-            let value_type = self.expr_types.get(&value.get_hash()).unwrap();
-
-            if let Some(ty) = ty {
-                self.try_coercion(ty, value_type)?;
+        let value_ty = match value {
+            Some(value) => {
+                self.check_expr(value, scope)?;
+                Some(self.get_type_of_expr(value).clone())
             }
-        } else if ty.is_none() {
-            bail!("let statement neither has a type nor an assigned value");
+            None => None,
+        };
+
+        match (&declared_ty, &value_ty) {
+            (Some(declared), Some(got)) => {
+                self.try_coercion(declared, got)?;
+            }
+            (None, None) => bail!("let statement neither has a type nor an assigned value"),
+            _ => (),
         }
 
         if self.does_name_exist(name, Some(scope)) {
-            bail!("{} already exists", name);
+            bail!("{name} already exists");
         }
 
-        if let Some(ty) = ty {
-            self.check_type(ty);
-        } else {
-            self.check_type(&self.get_type_of_expr(value.unwrap()).clone());
-        }
-
-        scope.add(name, match ty {
-            Some(ty) => ty.clone(),
-            None => self.get_type_of_expr(value.unwrap()).clone(),
-        });
+        let ty = declared_ty.or(value_ty).unwrap();
+        scope.add(name, ty);
 
         Ok(())
     }
@@ -396,20 +390,54 @@ impl Analysis {
         Ok(())
     }
 
-    fn check_type(&mut self, ty: &Type) {
-        self.types_used.insert(ty.clone());
+    /**
+     * collects every type that codegen will need to define, transitively
+     */
+    fn collect_used_types(&mut self) {
+        let types: Vec<Type> = self.func_decls.values()
+            .map(|func_type| Type::Func(Box::new(func_type.clone())))
+            .chain(self.expr_types.values().cloned())
+            .chain(self.type_map.values().cloned())
+            .collect();
+
+        for ty in types {
+            self.record_type(&ty);
+        }
+    }
+
+    fn record_type(&mut self, ty: &Type) {
+        if !self.types_used.insert(ty.clone()) {
+            return;
+        }
 
         match ty {
             Type::Func(ty) => {
-                self.check_type(&ty.return_type);
-                for param in &ty.params { self.check_type(param); }
+                self.record_type(&ty.return_type);
+                for param in &ty.params { self.record_type(param); }
             }
-            Type::Ptr(ty) => self.check_type(ty),
-            Type::Array(ty, _) => self.check_type(ty),
-            Type::Slice(ty) => self.check_type(ty),
+            Type::Ptr(ty) => self.record_type(ty),
+            Type::Array(ty, _) => self.record_type(ty),
+            Type::Slice(ty) => self.record_type(ty),
             Type::Void | Type::Primitive(_) => (),
         }
     }
+}
+
+fn join_errs(errs: Vec<anyhow::Error>) -> Result<()> {
+    if errs.is_empty() {
+        Ok(())
+    } else {
+        bail!(errs.iter()
+            .map(|err| format!("{err}"))
+            .reduce(|acc, err| format!("{acc}\n{err}"))
+            .unwrap_or_default())
+    }
+}
+
+struct Scope<'a> {
+    parent: Option<&'a Scope<'a>>,
+    symbols: HashMap<String, Type>,
+    return_type: Type,
 }
 
 impl<'a> Scope<'a> {
@@ -445,6 +473,95 @@ impl<'a> Scope<'a> {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum Type {
+    Void,
+    Primitive(Primitive),
+    Func(Box<FuncType>),
+    Ptr(Box<Type>),
+    Array(Box<Type>, u64),
+    Slice(Box<Type>),
+}
+
+impl Display for Type {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Type::Void => write!(f, "<void>"),
+            Type::Primitive(ty) => write!(f, "{ty}"),
+            Type::Func(ty) => write!(f, "{ty}"),
+            Type::Ptr(ty) => write!(f, "*{ty}"),
+            Type::Array(ty, size) => write!(f, "[{size}]{ty}"),
+            Type::Slice(ty) => write!(f, "[]{ty}"),
+        }
+    }
+}
+
+impl Type {
+    pub fn get_hash(&self) -> TypeHash {
+        let mut hasher = DefaultHasher::new();
+        self.hash(&mut hasher);
+        TypeHash(hasher.finish())
+    }
+}
+
+#[derive(Debug, PartialEq, Eq, Hash, Clone, Copy)]
+pub struct TypeHash(u64);
+
+impl Display for TypeHash {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{:x}", self.0)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct FuncType {
+    pub return_type: Type,
+    pub params: Vec<Type>,
+}
+
+impl Display for FuncType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "fn({}) -> {}",
+            self.params.iter()
+                .map(|ty| ty.to_string())
+                .reduce(|acc, ty| format!("{acc}, {ty}"))
+                .unwrap_or_default(),
+            self.return_type,
+        )
+    }
+}
+
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Clone, Hash)]
+pub enum Primitive {
+    I8,
+    U8,
+    I16,
+    U16,
+    I32,
+    U32,
+    I64,
+    U64,
+    F32,
+    F64,
+}
+
+impl Display for Primitive {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", match self {
+            Primitive::I8 => "i8",
+            Primitive::U8 => "u8",
+            Primitive::I16 => "i16",
+            Primitive::U16 => "u16",
+            Primitive::I32 => "i32",
+            Primitive::U32 => "u32",
+            Primitive::I64 => "i64",
+            Primitive::U64 => "u64",
+            Primitive::F32 => "f32",
+            Primitive::F64 => "f64",
+        })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -460,12 +577,12 @@ mod tests {
 
     #[test]
     fn valid_function() {
-        analyze(b"fn main() -> i32 { let x: i32 = 1 return x }").unwrap();
+        analyze(b"fn main() -> i32 { let x: i32 = 1; return x; }").unwrap();
     }
 
     #[test]
     fn undefined_variable() {
-        let result = analyze(b"fn main() -> i32 { let x: i32 = y return x }");
+        let result = analyze(b"fn main() -> i32 { let x: i32 = y; return x; }");
         assert!(result.is_err());
         let err = format!("{}", result.unwrap_err());
         assert!(err.contains("does not exist"), "{err}");
@@ -473,7 +590,7 @@ mod tests {
 
     #[test]
     fn duplicate_function() {
-        let result = analyze(b"fn foo() -> i32 { return 1 } fn foo() -> i32 { return 2 }");
+        let result = analyze(b"fn foo() -> i32 { return 1; } fn foo() -> i32 { return 2; }");
         assert!(result.is_err());
         let err = format!("{}", result.unwrap_err());
         assert!(err.contains("foo already exists"), "{err}");
@@ -481,7 +598,7 @@ mod tests {
 
     #[test]
     fn argument_count_mismatch() {
-        let result = analyze(b"fn foo(x: i32) -> i32 { return x } fn main() -> i32 { return foo(1, 2) }");
+        let result = analyze(b"fn foo(x: i32) -> i32 { return x; } fn main() -> i32 { return foo(1, 2); }");
         assert!(result.is_err());
         let err = format!("{}", result.unwrap_err());
         assert!(err.contains("expected"), "{err}");
@@ -489,9 +606,30 @@ mod tests {
 
     #[test]
     fn call_non_function() {
-        let result = analyze(b"fn main() -> i32 { let x: i32 = 1 return x(1) }");
+        let result = analyze(b"fn main() -> i32 { let x: i32 = 1; return x(1); }");
         assert!(result.is_err());
         let err = format!("{}", result.unwrap_err());
         assert!(err.contains("not a function"), "{err}");
+    }
+
+    #[test]
+    fn unknown_type() {
+        let result = analyze(b"fn main() -> nope { return 1; }");
+        assert!(result.is_err());
+        let err = format!("{}", result.unwrap_err());
+        assert!(err.contains("is not a type"), "{err}");
+    }
+
+    #[test]
+    fn unknown_type_in_let() {
+        let result = analyze(b"fn main() { let x: nope = 1; }");
+        assert!(result.is_err());
+        let err = format!("{}", result.unwrap_err());
+        assert!(err.contains("is not a type"), "{err}");
+    }
+
+    #[test]
+    fn decl_then_def_is_ok() {
+        analyze(b"fn foo() -> i32; fn foo() -> i32 { return 1; }").unwrap();
     }
 }

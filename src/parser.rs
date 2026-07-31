@@ -301,30 +301,15 @@ impl Parser {
 
     fn parse_type(&mut self) -> Result<Type> {
         match &self.peek_token {
-            _ if let Ok(ty) = self.expect_primitive_type() => {
+            Token::Ident(name) => {
+                let name = name.clone();
                 self.next_token()?;
-                Ok(ty)
-            },
+                Ok(Type::Named(name))
+            }
             Token::Asterisk => self.parse_pointer_type(),
             Token::LBracket => self.parse_array_slice_type(),
             token => bail!("expected a type but got {}", token),
         }
-    }
-
-    fn expect_primitive_type(&self) -> Result<Type> {
-        use Primitive::*;
-
-        Ok(match &self.peek_token {
-            Token::I8 => Type::Primitive(I8),
-            Token::U8 => Type::Primitive(U8),
-            Token::I16 => Type::Primitive(I16),
-            Token::U16 => Type::Primitive(U16),
-            Token::I32 => Type::Primitive(I32),
-            Token::U32 => Type::Primitive(U32),
-            Token::I64 => Type::Primitive(I64),
-            Token::U64 => Type::Primitive(U64),
-            token => bail!("expected a primitive but got {}", token),
-        })
     }
 
     fn parse_pointer_type(&mut self) -> Result<Type> {

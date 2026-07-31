@@ -85,8 +85,7 @@ pub struct File {
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum Type {
     Void,
-    Primitive(Primitive),
-    Func(Box<FuncType>),
+    Named(String),
     Ptr(Box<Type>),
     Array(Box<Type>, u64),
     Slice(Box<Type>),
@@ -96,68 +95,10 @@ impl Display for Type {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Type::Void => write!(f, "<void>"),
-            Type::Primitive(ty) => write!(f, "{ty}"),
-            Type::Func(ty) => write!(f, "{ty}"),
+            Type::Named(name) => write!(f, "{name}"),
             Type::Ptr(ty) => write!(f, "*{ty}"),
             Type::Array(ty, size) => write!(f, "[{size}]{ty}"),
             Type::Slice(ty) => write!(f, "[]{ty}"),
         }
-    }
-}
-
-impl Type {
-    pub fn get_hash(&self) -> u64 {
-        let mut hasher = DefaultHasher::new();
-        self.hash(&mut hasher);
-        hasher.finish()
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct FuncType {
-    pub return_type: Type,
-    pub params: Vec<Type>,
-}
-
-impl Display for FuncType {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "fn({}) -> {}",
-            self.params.iter()
-                .map(|ty| ty.to_string())
-                .reduce(|acc, ty| format!("{acc}, {ty}"))
-                .unwrap_or_default(),
-            self.return_type,
-        )
-    }
-}
-
-#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Clone, Hash)]
-pub enum Primitive {
-    I8,
-    U8,
-    I16,
-    U16,
-    I32,
-    U32,
-    I64,
-    U64,
-    F32,
-    F64,
-}
-
-impl Display for Primitive {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", match self {
-            Primitive::I8 => "i8",
-            Primitive::U8 => "u8",
-            Primitive::I16 => "i16",
-            Primitive::U16 => "u16",
-            Primitive::I32 => "i32",
-            Primitive::U32 => "u32",
-            Primitive::I64 => "i64",
-            Primitive::U64 => "u64",
-            Primitive::F32 => "f32",
-            Primitive::F64 => "f64",
-        })
     }
 }
