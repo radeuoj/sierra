@@ -175,7 +175,7 @@ impl Analysis {
 
     fn check_expr(&mut self, expr: &Expression, scope: &Scope) -> Result<()> {
         match expr {
-            Expression::Ident { value } => self.check_ident(expr, value, scope),
+            Expression::Ident { value, .. } => self.check_ident(expr, value, scope),
             Expression::Int { .. } => self.check_int(expr),
             Expression::String { .. } => todo!("we don't support strings atm"),
             Expression::Unary { op, right } => self.check_unary(expr, op, right, scope),

@@ -6,6 +6,7 @@ use crate::token::Token;
 pub enum Expression {
     Ident {
         value: String,
+        id: u64,
     },
     Int {
         value: String,

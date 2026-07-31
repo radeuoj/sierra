@@ -8,6 +8,7 @@ use crate::ast::*;
 pub struct Parser {
     lexer: Lexer,
     peek_token: Token,
+    next_id: u64,
 }
 
 #[derive(PartialEq, PartialOrd)]
@@ -42,6 +43,7 @@ impl Parser {
         Ok(Self {
             peek_token: lexer.next_token()?,
             lexer,
+            next_id: 0,
         })
     }
 
@@ -107,7 +109,8 @@ impl Parser {
     }
 
     fn parse_ident(&mut self, name: String) -> Expression {
-        Expression::Ident { value: name }
+        self.next_id += 1;
+        Expression::Ident { value: name, id: self.next_id - 1 }
     }
 
     fn parse_int(&mut self, lit: String) -> Expression {

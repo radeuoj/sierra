@@ -219,7 +219,7 @@ struct __Slice_{} {{
         use Expression::*;
 
         match expr {
-            Ident { value } => value.into(),
+            Ident { value, .. } => value.into(),
             Int { value } => value.into(),
             String { value } => format!("\"{value}\""),
             Unary { op, right } => format!("{op}{}",
@@ -255,7 +255,7 @@ struct __Slice_{} {{
 
                 match self.analysis.get_type_of_expr(arg) {
                     Type::Array(_, len) => format!("{len}"),
-                    Type::Slice(_) => format!("({})", self.compile_expression(arg)),
+                    Type::Slice(_) => format!("({}).len", self.compile_expression(arg)),
                     _ => unreachable!(),
                 }
             }
