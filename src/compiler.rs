@@ -178,7 +178,11 @@ struct __Slice_{} {{
                         Some(value) => format!("{} {} = {};",
                             self.compile_analysis_type(self.analysis.get_type_of_expr(value)),
                             name,
-                            self.compile_expression(value)),
+                            match ty {
+                                Some(ty) => self.coerce_and_compile_expr(value,
+                                    self.analysis.type_map.get(ty).unwrap()),
+                                None => self.compile_expression(value),
+                            }),
                         None => format!("{} {};",
                             self.compile_type(ty.as_ref().unwrap()),
                             name),
@@ -238,13 +242,14 @@ struct __Slice_{} {{
     fn compile_call_expr(&self, func: &Expression, args: &[Expression]) -> String {
         match self.analysis.get_type_of_expr(func) {
             Type::Builtin(builtin) => self.compile_builtin_call_expr(*builtin, args),
-            _ => format!("{}({})",
+            Type::Func(ty) => format!("{}({})",
                 self.compile_expression(func),
                 args.iter()
-                    .map(|arg| self.compile_expression(arg))
+                    .zip(&ty.params)
+                    .map(|(arg, ty)| self.coerce_and_compile_expr(arg, ty))
                     .reduce(|acc, s| format!("{acc}, {s}"))
                     .unwrap_or_default()),
-
+            _ => unreachable!(),
         }
     }
 
@@ -259,6 +264,22 @@ struct __Slice_{} {{
                     _ => unreachable!(),
                 }
             }
+        }
+    }
+
+    fn coerce_and_compile_expr(&self, expr: &Expression, expected: &Type) -> String {
+        let got = self.analysis.get_type_of_expr(expr);
+
+        match (expected, got) {
+            (exp_ty @ Type::Slice(expected), Type::Ptr(inner)) => match **inner {
+                Type::Array(ref got, size) if expected == got => format!("({}){{ ({}*)({}), {} }}",
+                    self.compile_analysis_type(exp_ty),
+                    self.compile_analysis_type(expected),
+                    self.compile_expression(expr),
+                    size),
+                _ => unreachable!(),
+            }
+            _ => self.compile_expression(expr),
         }
     }
 

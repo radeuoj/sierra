@@ -240,10 +240,14 @@ impl Analysis {
         Ok(())
     }
 
-    fn try_coercion(&self, expected: &Type, got: &Type) -> Result<Type> {
+    fn try_coercion(&self, expected: &Type, got: &Type) -> Result<()> {
         match (expected, got) {
-            (expected, got) if expected == got => Ok(expected.clone()),
-            (Type::Primitive(expected), Type::Primitive(_)) => Ok(Type::Primitive(expected.clone())),
+            (expected, got) if expected == got => Ok(()),
+            (Type::Primitive(_), Type::Primitive(_)) => Ok(()),
+            (Type::Slice(expected), Type::Ptr(inner)) if match **inner {
+                Type::Array(ref got, _) if expected == got => true,
+                _ => false,
+            } => Ok(()),
             (expected, got) => bail!("expected type {} but got {}", expected, got),
         }
     }
