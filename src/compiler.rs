@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use crate::analysis::{Analysis, Primitive, Type};
+use crate::analysis::{Analysis, Builtin, Type};
 use crate::ast::{self, BlockStmt, Expression, File, FuncParam, Statement};
 
 #[allow(unused)]
@@ -71,7 +71,7 @@ typedef double f64;
                     aux.get_mut(inner).unwrap().0.push(ty.clone());
                 }
                 Type::Slice(_) => (),
-                Type::Void | Type::Primitive(_) => (),
+                Type::Void | Type::Primitive(_) | Type::Builtin(_) => (),
             }
         }
 
@@ -227,16 +227,38 @@ struct __Slice_{} {{
             Binary { op, left, right } => format!("{} {op} {}",
                 self.compile_expression(left),
                 self.compile_expression(right)),
-            Call { func, args } => format!("{}({})",
+            Call { func, args } => self.compile_call_expr(func, args),
+            At { left, right } => format!("({}).inner[{}]",
+                self.compile_expression(left),
+                self.compile_expression(right),
+            ),
+        }
+    }
+
+    fn compile_call_expr(&self, func: &Expression, args: &[Expression]) -> String {
+        match self.analysis.get_type_of_expr(func) {
+            Type::Builtin(builtin) => self.compile_builtin_call_expr(*builtin, args),
+            _ => format!("{}({})",
                 self.compile_expression(func),
                 args.iter()
                     .map(|arg| self.compile_expression(arg))
                     .reduce(|acc, s| format!("{acc}, {s}"))
                     .unwrap_or_default()),
-            At { left, right } => format!("({}).inner[{}]",
-                self.compile_expression(left),
-                self.compile_expression(right),
-            ),
+
+        }
+    }
+
+    fn compile_builtin_call_expr(&self, builtin: Builtin, args: &[Expression]) -> String {
+        match builtin {
+            Builtin::Len => {
+                let arg = &args[0];
+
+                match self.analysis.get_type_of_expr(arg) {
+                    Type::Array(_, len) => format!("{len}"),
+                    Type::Slice(_) => format!("({})", self.compile_expression(arg)),
+                    _ => unreachable!(),
+                }
+            }
         }
     }
 
@@ -260,22 +282,12 @@ struct __Slice_{} {{
     fn compile_analysis_type(&self, ty: &Type) -> String {
         match ty {
             Type::Void => "void".into(),
-            Type::Primitive(ty) => match ty {
-                Primitive::I8 => "i8".into(),
-                Primitive::U8 => "u8".into(),
-                Primitive::I16 => "i16".into(),
-                Primitive::U16 => "u16".into(),
-                Primitive::I32 => "i32".into(),
-                Primitive::U32 => "u32".into(),
-                Primitive::I64 => "i64".into(),
-                Primitive::U64 => "u64".into(),
-                Primitive::F32 => "f32".into(),
-                Primitive::F64 => "f64".into(),
-            }
-            Type::Func(_) => todo!("this is a bit more difficult :("),
+            Type::Primitive(ty) => format!("{ty}"),
             Type::Ptr(ty) => format!("{}*", self.compile_analysis_type(ty)),
             ty @ Type::Array(_, _) => format!("struct __Array_{}", ty.get_hash()),
             ty @ Type::Slice(_) => format!("struct __Slice_{}", ty.get_hash()),
+            Type::Func(_) => todo!("this is a bit more difficult :("),
+            Type::Builtin(_) => unreachable!(),
         }
     }
 }

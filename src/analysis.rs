@@ -26,8 +26,9 @@ impl Analysis {
         };
 
         let mut global = Scope::new(Type::Void);
-
         analysis.add_primitive_types();
+        analysis.add_builtins(&mut global);
+
         analysis.check_top_level(file, &mut global)?;
         analysis.check_func_bodies(file, &global)?;
         analysis.collect_used_types(&global);
@@ -46,6 +47,10 @@ impl Analysis {
         self.named_types.insert("u64".into(), Type::Primitive(Primitive::U64));
         self.named_types.insert("f32".into(), Type::Primitive(Primitive::F32));
         self.named_types.insert("f64".into(), Type::Primitive(Primitive::F64));
+    }
+
+    fn add_builtins(&self, scope: &mut Scope) {
+        scope.add("len", Type::Builtin(Builtin::Len));
     }
 
     /**
@@ -246,8 +251,17 @@ impl Analysis {
     fn check_call(&mut self, expr: &Expression, func: &Expression, args: &[Expression], scope: &Scope) -> Result<()> {
         self.check_expr(func, scope)?;
 
-        let Type::Func(ty) = self.expr_types.get(&func.get_hash()).unwrap() else {
-            bail!("left of call expr is not a function");
+        let mut errs = vec![];
+        for arg in args.iter() {
+            if let Err(err) = self.check_expr(arg, scope) {
+                errs.push(err);
+            }
+        }
+
+        let ty = match self.get_type_of_expr(func) {
+            Type::Func(ty) => ty,
+            Type::Builtin(builtin) => return self.check_builtin_call(expr, *builtin, args),
+            _ => bail!("left of call expr is not a function"),
         };
 
         let ty = *ty.clone();
@@ -256,12 +270,7 @@ impl Analysis {
             bail!("expected {} args but got {}", ty.params.len(), args.len());
         }
 
-        let mut errs = vec![];
         for (arg, ty) in args.iter().zip(ty.params.iter()) {
-            if let Err(err) = self.check_expr(arg, scope) {
-                errs.push(err);
-            }
-
             if let Err(err) = self.try_coercion(ty, self.expr_types.get(&arg.get_hash()).unwrap()) {
                 errs.push(err);
             }
@@ -270,6 +279,27 @@ impl Analysis {
         self.expr_types.insert(expr.get_hash(), ty.return_type.clone());
 
         join_errs(errs)
+    }
+
+    fn check_builtin_call(&mut self, expr: &Expression, builtin: Builtin, args: &[Expression]) -> Result<()> {
+        match builtin {
+            Builtin::Len => {
+                if args.len() != 1 {
+                    bail!("expected 1 arg but got {}", args.len());
+                }
+
+                let arg = &args[0];
+                let ty = self.get_type_of_expr(arg);
+
+                if !matches!(ty, Type::Array(..) | Type::Slice(..)) {
+                    bail!("expected type array or slice but got {}", ty);
+                }
+
+                self.expr_types.insert(expr.get_hash(), Type::Primitive(Primitive::U64));
+            }
+        }
+
+        Ok(())
     }
 
     fn check_at(&mut self, expr: &Expression, left: &Expression, right: &Expression, scope: &Scope) -> Result<()> {
@@ -322,6 +352,10 @@ impl Analysis {
             }
             None => None,
         };
+
+        if let Some(Type::Builtin(name)) = value_ty {
+            bail!("builtin {name} cannot be assigned to a variable");
+        }
 
         match (&declared_ty, &value_ty) {
             (Some(declared), Some(got)) => {
@@ -391,7 +425,7 @@ impl Analysis {
             Type::Ptr(ty) => self.record_type(ty),
             Type::Array(ty, _) => self.record_type(ty),
             Type::Slice(ty) => self.record_type(ty),
-            Type::Void | Type::Primitive(_) => (),
+            Type::Void | Type::Primitive(_) | Type::Builtin(_) => (),
         }
     }
 }
@@ -468,6 +502,7 @@ pub enum Type {
     Ptr(Box<Type>),
     Array(Box<Type>, u64),
     Slice(Box<Type>),
+    Builtin(Builtin),
 }
 
 impl Display for Type {
@@ -479,6 +514,7 @@ impl Display for Type {
             Type::Ptr(ty) => write!(f, "*{ty}"),
             Type::Array(ty, size) => write!(f, "[{size}]{ty}"),
             Type::Slice(ty) => write!(f, "[]{ty}"),
+            Type::Builtin(ty) => write!(f, "<builtin {ty}>"),
         }
     }
 }
@@ -545,6 +581,19 @@ impl Display for Primitive {
             Primitive::U64 => "u64",
             Primitive::F32 => "f32",
             Primitive::F64 => "f64",
+        })
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Builtin {
+    Len,
+}
+
+impl Display for Builtin {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", match self {
+            Builtin::Len => "len",
         })
     }
 }
