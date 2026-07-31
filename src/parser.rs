@@ -369,9 +369,9 @@ mod tests {
     fn test_parse_program() -> Result<()> {
         let input = br#"
             fn main() -> i32 {
-                printf("salutare")
-                let a: i32 = 1 + 1
-                let b: bool = !false
+                printf("salutare");
+                let a: i32 = 1 + 1;
+                let b: bool = !false;
             }
         "#;
 

@@ -50,17 +50,9 @@ impl Analysis {
         self.named_types.insert("f64".into(), Type::Primitive(Primitive::F64));
     }
 
-    fn does_name_exist(&self, name: &str, scope: Option<&Scope>) -> bool {
-        self.func_decls.contains_key(name)
-            || scope.map_or(false, |scope| scope.contains(name))
-    }
-
     fn get_type_of(&self, name: &str, scope: Option<&Scope>) -> Option<Type> {
-        if let Some(func_type) = self.func_decls.get(name) {
-            Some(Type::Func(Box::new(func_type.clone())))
-        } else {
-            scope.map(|scope| scope.get_type_of(name)).unwrap_or(None)
-        }
+        scope.map(|scope| scope.get_type_of(name)).unwrap_or(None)
+            .or(self.func_decls.get(name).map(|ty| Type::Func(Box::new(ty.clone()))))
     }
 
     /**
@@ -134,11 +126,10 @@ impl Analysis {
 
         let mut param_names = HashSet::new();
         for param in params {
-            if self.does_name_exist(&param.name, None)
-                || param_names.contains(&param.name)
-            {
+            if param_names.contains(&param.name) {
                 bail!("{} already exists", param.name);
             }
+
             param_names.insert(param.name.clone());
         }
 
@@ -316,10 +307,8 @@ impl Analysis {
     }
 
     fn check_block(&mut self, block: &BlockStmt, scope: &mut Scope) -> Result<()> {
-        let mut scope = scope.get_child();
-
         for stmt in block {
-            self.check_stmt(stmt, &mut scope)?;
+            self.check_stmt(stmt, scope)?;
         }
 
         Ok(())
@@ -357,7 +346,7 @@ impl Analysis {
             _ => (),
         }
 
-        if self.does_name_exist(name, Some(scope)) {
+        if scope.contains_local(name) {
             bail!("{name} already exists");
         }
 
@@ -384,8 +373,8 @@ impl Analysis {
             ty => bail!("if statement condition must be a primitive but instead got {}", ty),
         }
 
-        self.check_block(then, scope)?;
-        self.check_block(else_then, scope)?;
+        self.check_block(then, &mut scope.get_child())?;
+        self.check_block(else_then, &mut scope.get_child())?;
 
         Ok(())
     }
@@ -440,6 +429,7 @@ struct Scope<'a> {
     return_type: Type,
 }
 
+#[allow(dead_code)]
 impl<'a> Scope<'a> {
     fn new(return_type: Type) -> Self {
         Self {
@@ -458,6 +448,10 @@ impl<'a> Scope<'a> {
 
     fn contains(&self, name: &str) -> bool {
         self.get_type_of(name).is_some()
+    }
+
+    fn contains_local(&self, name: &str) -> bool {
+        self.symbols.contains_key(name)
     }
 
     fn add(&mut self, name: &str, ty: Type) {
@@ -631,5 +625,49 @@ mod tests {
     #[test]
     fn decl_then_def_is_ok() {
         analyze(b"fn foo() -> i32; fn foo() -> i32 { return 1; }").unwrap();
+    }
+
+    #[test]
+    fn shadowing_in_inner_block_is_allowed() {
+        analyze(b"fn main() -> i32 { let x: i32 = 1; if 1 { let x: i32 = 2; } return x; }").unwrap();
+    }
+
+    #[test]
+    fn same_scope_redefinition_errors() {
+        let result = analyze(b"fn main() { let x: i32 = 1; let x: i32 = 2; }");
+        assert!(result.is_err());
+        let err = format!("{}", result.unwrap_err());
+        assert!(err.contains("already exists"), "{err}");
+    }
+
+    #[test]
+    fn local_shadows_function() {
+        analyze(b"fn foo() -> i32 { return 1; } fn main() -> i32 { let foo: i32 = 1; return foo; }").unwrap();
+    }
+
+    #[test]
+    fn param_can_be_named_like_a_function() {
+        analyze(b"fn foo() -> i32 { return 1; } fn main(foo: i32) -> i32 { return foo; }").unwrap();
+    }
+
+    #[test]
+    fn param_cannot_be_shadowed_at_body_top() {
+        let result = analyze(b"fn main(x: i32) { let x: i32 = 1; }");
+        assert!(result.is_err());
+        let err = format!("{}", result.unwrap_err());
+        assert!(err.contains("already exists"), "{err}");
+    }
+
+    #[test]
+    fn param_can_be_shadowed_in_if_block() {
+        analyze(b"fn main(x: i32) -> i32 { if 1 { let x: i32 = 2; } return x; }").unwrap();
+    }
+
+    #[test]
+    fn duplicate_params_error() {
+        let result = analyze(b"fn foo(x: i32, x: i32) {}");
+        assert!(result.is_err());
+        let err = format!("{}", result.unwrap_err());
+        assert!(err.contains("already exists"), "{err}");
     }
 }
