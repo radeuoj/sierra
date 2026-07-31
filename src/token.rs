@@ -37,6 +37,7 @@ pub enum Token {
     Fn,
     If,
     Else,
+    While,
     Return,
 }
 
@@ -48,6 +49,7 @@ impl Token {
             "fn" => Fn,
             "if" => If,
             "else" => Else,
+            "while" => While,
             "return" => Return,
             _ => Ident(symbol.to_string()),
         }
@@ -96,6 +98,7 @@ impl std::fmt::Display for Token {
             Fn => "fn",
             If => "if",
             Else => "else",
+            While => "while",
             Return => "return",
         };
 

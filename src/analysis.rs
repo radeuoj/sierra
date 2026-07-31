@@ -339,6 +339,7 @@ impl Analysis {
             Statement::Let { name, ty, value } => self.check_let(name, ty, value.into(), scope),
             Statement::Return { value } => self.check_return(value, scope),
             Statement::If { cond, then, else_then } => self.check_if(cond, then, else_then, scope),
+            Statement::While { cond, block } => self.check_while(cond, block, scope),
             Statement::Func { .. } => bail!("funcs are only allowed at top level"),
             Statement::Expr { value } => self.check_expr(value, scope),
         }
@@ -380,7 +381,7 @@ impl Analysis {
         Ok(())
     }
 
-    fn check_return(&mut self, value: &Expression, scope: &mut Scope) -> Result<()> {
+    fn check_return(&mut self, value: &Expression, scope: &Scope) -> Result<()> {
         self.check_expr(value, scope)?;
         let value_type = self.expr_types.get(&value.get_hash()).unwrap();
 
@@ -389,7 +390,7 @@ impl Analysis {
         Ok(())
     }
 
-    fn check_if(&mut self, cond: &Expression, then: &BlockStmt, else_then: &BlockStmt, scope: &mut Scope) -> Result<()> {
+    fn check_if(&mut self, cond: &Expression, then: &BlockStmt, else_then: &BlockStmt, scope: &Scope) -> Result<()> {
         self.check_expr(cond, scope)?;
 
         match self.get_type_of_expr(cond) {
@@ -399,6 +400,19 @@ impl Analysis {
 
         self.check_block(then, &mut scope.get_child())?;
         self.check_block(else_then, &mut scope.get_child())?;
+
+        Ok(())
+    }
+
+    fn check_while(&mut self, cond: &Expression, block: &BlockStmt, scope: &Scope) -> Result<()> {
+        self.check_expr(cond, scope)?;
+
+        match self.get_type_of_expr(cond) {
+            Type::Primitive(_) => (),
+            ty => bail!("while statement condition must be a primitive but instead got {}", ty),
+        }
+
+        self.check_block(block, &mut scope.get_child())?;
 
         Ok(())
     }

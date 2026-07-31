@@ -179,6 +179,7 @@ impl Parser {
             Token::Let => self.parse_let_statement(),
             Token::Return => self.parse_return_statement(),
             Token::If => self.parse_if_statement(),
+            Token::While => self.parse_while_statement(),
             Token::Fn => self.parse_func_statement(),
             _ => self.parse_expr_statement(),
         }
@@ -230,6 +231,14 @@ impl Parser {
         };
 
         Ok(Statement::If { cond, then, else_then })
+    }
+
+    fn parse_while_statement(&mut self) -> Result<Statement> {
+        self.next_token()?; // while
+        let cond = self.parse_expression(BindingPower::Lowest)?;
+        let block = self.parse_block_statement()?;
+
+        Ok(Statement::While { cond, block })
     }
 
     fn parse_block_statement(&mut self) -> Result<BlockStmt> {

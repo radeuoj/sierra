@@ -67,6 +67,10 @@ pub enum Statement {
         then: BlockStmt,
         else_then: BlockStmt,
     },
+    While {
+        cond: Expression,
+        block: BlockStmt,
+    },
     Func {
         name: String,
         return_type: Type,
@@ -75,7 +79,7 @@ pub enum Statement {
     },
     Expr {
         value: Expression,
-    }
+    },
 }
 
 #[derive(Debug)]
