@@ -176,7 +176,10 @@ struct __Slice_{} {{
                 Let { name, ty, value } => {
                     match value {
                         Some(value) => format!("{} {} = {};",
-                            self.compile_analysis_type(self.analysis.get_type_of_expr(value)),
+                            match ty {
+                                Some(ty) => self.compile_type(ty),
+                                None => self.compile_analysis_type(self.analysis.get_type_of_expr(value)),
+                            },
                             name,
                             match ty {
                                 Some(ty) => self.coerce_and_compile_expr(value,

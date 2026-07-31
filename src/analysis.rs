@@ -312,6 +312,7 @@ impl Analysis {
 
         let ty = match self.get_type_of_expr(left) {
             Type::Array(ty, _) => &**ty,
+            Type::Slice(ty) => &**ty,
             ty => bail!("at expression expected an array but got {}", ty),
         };
 
