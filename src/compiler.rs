@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
-use crate::analysis::{Analysis, FuncType, Primitive, Type};
-use crate::ast::{BlockStmt, Expression, File, FuncParam, Statement};
+use crate::analysis::{Analysis, Primitive, Type};
+use crate::ast::{self, BlockStmt, Expression, File, FuncParam, Statement};
 
 #[allow(unused)]
 pub struct Compiler {
@@ -41,7 +41,7 @@ typedef double f64;
             "#,
             self.compile_type_decls(&ordered_types),
             self.compile_type_defs(&ordered_types),
-            self.compile_func_decls(&self.analysis.func_decls),
+            self.compile_func_decls(&self.file.body),
             self.compile_func_defs(&self.file.body),
         )
     }
@@ -121,7 +121,7 @@ struct __Array_{} {{
     {} inner[{}];
 }};",
                     ty.get_hash(),
-                    self.compile_type(inner),
+                    self.compile_analysis_type(inner),
                     size)),
                 Type::Slice(inner) => Some(format!("\
 struct __Slice_{} {{
@@ -129,20 +129,25 @@ struct __Slice_{} {{
     u64 len;
 }};",
                     ty.get_hash(),
-                    self.compile_type(inner))),
+                    self.compile_analysis_type(inner))),
                 _ => None,
             })
             .reduce(|acc, decl| format!("{acc}\n{decl}"))
             .unwrap_or_default()
     }
 
-    fn compile_func_decls(&self, decls: &HashMap<String, FuncType>) -> String {
-        decls.iter()
-            .map(|(name, ty)| format!("{} {}({});",
-                self.compile_type(&ty.return_type),
+    fn compile_func_decls(&self, body: &[Statement]) -> String {
+        body.iter()
+            .filter_map(|stmt| match stmt {
+                Statement::Func { name, return_type, params, .. }
+                    => Some((name, return_type, params)),
+                _ => None,
+            })
+            .map(|(name, return_type, params)| format!("{} {}({});",
+                self.compile_type(return_type),
                 name,
-                ty.params.iter()
-                    .map(|param| self.compile_type(param))
+                params.iter()
+                    .map(|param| self.compile_param(&param.name, &param.ty))
                     .reduce(|acc, param| format!("{acc}, {param}"))
                     .unwrap_or_default()
             ))
@@ -171,11 +176,11 @@ struct __Slice_{} {{
                 Let { name, ty, value } => {
                     match value {
                         Some(value) => format!("{} {} = {};",
-                            self.compile_type(self.analysis.get_type_of_expr(value)),
+                            self.compile_analysis_type(self.analysis.get_type_of_expr(value)),
                             name,
                             self.compile_expression(value)),
                         None => format!("{} {};",
-                            self.compile_type(self.analysis.type_map.get(ty.as_ref().unwrap()).unwrap()),
+                            self.compile_type(ty.as_ref().unwrap()),
                             name),
                     }
                 }
@@ -188,8 +193,8 @@ struct __Slice_{} {{
                 ),
                 Expr { value } => format!("{};",
                     self.compile_expression(value)),
-                Func { name, params, body: Some(body), .. } => format!("{} {}",
-                    self.compile_func_decl(name, self.analysis.func_decls.get(name).unwrap(), params),
+                Func { name, return_type, params, body: Some(body), } => format!("{} {}",
+                    self.compile_func_decl(name, return_type, params),
                     self.compile_block_statement(body, indent),
                 ),
                 Func { body: None, .. } => "".into(), // skip
@@ -235,21 +240,24 @@ struct __Slice_{} {{
         }
     }
 
-    fn compile_func_decl(&self, name: &str, func_type: &FuncType, params: &[FuncParam]) -> String {
+    fn compile_func_decl(&self, name: &str, return_type: &ast::Type, params: &[FuncParam]) -> String {
         format!("{} {}({})",
-            self.compile_type(&func_type.return_type), name,
+            self.compile_type(return_type), name,
             params.iter()
-                .zip(func_type.params.iter())
-                .map(|(param, ty)| self.compile_param(&param.name, ty))
+                .map(|param| self.compile_param(&param.name, &param.ty))
                 .reduce(|acc, s| format!("{acc}, {s}"))
                 .unwrap_or_default())
     }
 
-    fn compile_param(&self, name: &str, ty: &Type) -> String {
+    fn compile_param(&self, name: &str, ty: &ast::Type) -> String {
         format!("{} {}", self.compile_type(ty), name)
     }
 
-    fn compile_type(&self, ty: &Type) -> String {
+    fn compile_type(&self, ty: &ast::Type) -> String {
+        self.compile_analysis_type(self.analysis.type_map.get(ty).unwrap())
+    }
+
+    fn compile_analysis_type(&self, ty: &Type) -> String {
         match ty {
             Type::Void => "void".into(),
             Type::Primitive(ty) => match ty {
@@ -265,7 +273,7 @@ struct __Slice_{} {{
                 Primitive::F64 => "f64".into(),
             }
             Type::Func(_) => todo!("this is a bit more difficult :("),
-            Type::Ptr(ty) => format!("{}*", self.compile_type(ty)),
+            Type::Ptr(ty) => format!("{}*", self.compile_analysis_type(ty)),
             ty @ Type::Array(_, _) => format!("struct __Array_{}", ty.get_hash()),
             ty @ Type::Slice(_) => format!("struct __Slice_{}", ty.get_hash()),
         }

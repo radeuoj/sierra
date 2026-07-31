@@ -7,12 +7,10 @@ use crate::token::Token;
 
 #[derive(Debug)]
 pub struct Analysis {
-    pub expr_types: HashMap<ExprHash, Type>,
-    pub func_decls: HashMap<String, FuncType>,
-    pub func_defs: HashSet<String>, // whether this function has a definition already
+    pub named_types: HashMap<String, Type>,
     pub type_map: HashMap<ast::Type, Type>,
+    pub expr_types: HashMap<ExprHash, Type>,
     pub types_used: HashSet<Type>,
-    pub named_types: HashMap<String, Type>
 }
 
 /**
@@ -22,17 +20,17 @@ impl Analysis {
     pub fn new(file: &File) -> Result<Self> {
         let mut analysis = Self {
             expr_types: HashMap::new(),
-            func_decls: HashMap::new(),
-            func_defs: HashSet::new(),
             type_map: HashMap::new(),
             types_used: HashSet::new(),
             named_types: HashMap::new(),
         };
 
+        let mut global = Scope::new(Type::Void);
+
         analysis.add_primitive_types();
-        analysis.check_top_level(file)?;
-        analysis.check_func_bodies(file)?;
-        analysis.collect_used_types();
+        analysis.check_top_level(file, &mut global)?;
+        analysis.check_func_bodies(file, &global)?;
+        analysis.collect_used_types(&global);
 
         Ok(analysis)
     }
@@ -48,11 +46,6 @@ impl Analysis {
         self.named_types.insert("u64".into(), Type::Primitive(Primitive::U64));
         self.named_types.insert("f32".into(), Type::Primitive(Primitive::F32));
         self.named_types.insert("f64".into(), Type::Primitive(Primitive::F64));
-    }
-
-    fn get_type_of(&self, name: &str, scope: Option<&Scope>) -> Option<Type> {
-        scope.map(|scope| scope.get_type_of(name)).unwrap_or(None)
-            .or(self.func_decls.get(name).map(|ty| Type::Func(Box::new(ty.clone()))))
     }
 
     /**
@@ -79,15 +72,15 @@ impl Analysis {
         Ok(resolved)
     }
 
-    fn check_top_level(&mut self, file: &File) -> Result<()> {
+    fn check_top_level(&mut self, file: &File, scope: &mut Scope) -> Result<()> {
         for stmt in &file.body {
             match stmt {
                 Statement::Func {
                     name,
                     return_type,
                     params,
-                    body,
-                } => self.check_func(name, return_type, params, body.is_some())?,
+                    ..
+                } => self.check_func(name, return_type, params, scope)?,
                 _ => bail!("only functions are allowed at top level"),
             }
         }
@@ -100,7 +93,7 @@ impl Analysis {
         name: &str,
         return_type: &ast::Type,
         params: &[FuncParam],
-        is_def: bool,
+        scope: &mut Scope,
     ) -> Result<()> {
         let return_type = self.resolve_type(return_type)?;
 
@@ -110,18 +103,8 @@ impl Analysis {
             param_types.push(ty);
         }
 
-        let func_type = FuncType {
-            return_type,
-            params: param_types,
-        };
-
-        // a decl with the same signature, or a def after a decl, are allowed;
-        // everything else is a duplicate
-        match self.func_decls.get(name) {
-            None => (),
-            Some(existing) if existing == &func_type
-                && (!is_def || !self.func_defs.contains(name)) => (),
-            Some(_) => bail!("{name} already exists"),
+        if scope.contains_local(name) {
+            bail!("{name} already exists");
         }
 
         let mut param_names = HashSet::new();
@@ -133,8 +116,10 @@ impl Analysis {
             param_names.insert(param.name.clone());
         }
 
-        self.func_decls.insert(name.into(), func_type);
-        if is_def { self.func_defs.insert(name.into()); }
+        scope.add(name, Type::Func(Box::new(FuncType {
+            return_type,
+            params: param_types,
+        })));
 
         Ok(())
     }
@@ -142,7 +127,7 @@ impl Analysis {
     /**
      * this assumes that param types and names and function return type have been already checked
      */
-    fn check_func_bodies(&mut self, file: &File) -> Result<()> {
+    fn check_func_bodies(&mut self, file: &File, scope: &Scope) -> Result<()> {
         let mut errs = vec![];
 
         for stmt in &file.body {
@@ -157,11 +142,11 @@ impl Analysis {
 
             let Some(body) = body else { continue };
 
-            if let Err(err) = self.check_func_body(
-                self.func_decls.get(name).unwrap().clone(),
-                params,
-                body,
-            ) {
+            let Type::Func(ty) = scope.get_type_of(name).unwrap() else {
+                unreachable!("already checked");
+            };
+
+            if let Err(err) = self.check_func_body(*ty, params, body, scope) {
                 errs.push(err);
             }
         }
@@ -169,10 +154,10 @@ impl Analysis {
         join_errs(errs)
     }
 
-    fn check_func_body(&mut self, func_type: FuncType, params: &[FuncParam], body: &BlockStmt) -> Result<()> {
+    fn check_func_body(&mut self, func_type: FuncType, params: &[FuncParam], body: &BlockStmt, scope: &Scope) -> Result<()> {
         let return_type = &func_type.return_type;
         let params = params.iter().map(|param| &param.name).zip(func_type.params.iter());
-        let mut scope = Scope::new(return_type.clone());
+        let mut scope = scope.get_child_with(return_type.clone());
 
         for (param, ty) in params {
             scope.add(param, ty.clone());
@@ -196,7 +181,7 @@ impl Analysis {
     }
 
     fn check_ident(&mut self, expr: &Expression, value: &str, scope: &Scope) -> Result<()> {
-        let Some(ty) = self.get_type_of(value, Some(scope)) else {
+        let Some(ty) = scope.get_type_of(value) else {
             bail!("{value} does not exist");
         };
 
@@ -382,9 +367,8 @@ impl Analysis {
     /**
      * collects every type that codegen will need to define, transitively
      */
-    fn collect_used_types(&mut self) {
-        let types: Vec<Type> = self.func_decls.values()
-            .map(|func_type| Type::Func(Box::new(func_type.clone())))
+    fn collect_used_types(&mut self, scope: &Scope) {
+        let types: Vec<Type> = scope.symbols.values().cloned()
             .chain(self.expr_types.values().cloned())
             .chain(self.type_map.values().cloned())
             .collect();
@@ -423,6 +407,7 @@ fn join_errs(errs: Vec<anyhow::Error>) -> Result<()> {
     }
 }
 
+#[derive(Debug)]
 struct Scope<'a> {
     parent: Option<&'a Scope<'a>>,
     symbols: HashMap<String, Type>,
@@ -434,6 +419,22 @@ impl<'a> Scope<'a> {
     fn new(return_type: Type) -> Self {
         Self {
             parent: None,
+            symbols: HashMap::new(),
+            return_type,
+        }
+    }
+
+    fn get_child(&'a self) -> Scope<'a> {
+        Self {
+            parent: Some(self),
+            symbols: HashMap::new(),
+            return_type: self.return_type.clone(),
+        }
+    }
+
+    fn get_child_with(&'a self, return_type: Type) -> Scope<'a> {
+        Self {
+            parent: Some(self),
             symbols: HashMap::new(),
             return_type,
         }
@@ -456,14 +457,6 @@ impl<'a> Scope<'a> {
 
     fn add(&mut self, name: &str, ty: Type) {
         self.symbols.insert(name.into(), ty);
-    }
-
-    fn get_child(&'a self) -> Scope<'a> {
-        Self {
-            parent: Some(self),
-            symbols: HashMap::new(),
-            return_type: self.return_type.clone(),
-        }
     }
 }
 
